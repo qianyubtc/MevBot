@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Sword, ArrowLeftRight, Droplets,
-  Crosshair, Zap, Settings, Activity,
+  Crosshair, Zap, Settings, Activity, Download,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store'
@@ -28,15 +28,16 @@ export default function Sidebar() {
       </div>
 
       {/* Runner status */}
-      <div className="mx-3 mt-3 px-3 py-2 rounded-lg bg-bg-elevated border border-bg-border flex items-center gap-2">
+      <NavLink to="/download" className="mx-3 mt-3 px-3 py-2 rounded-lg bg-bg-elevated border border-bg-border flex items-center gap-2 hover:border-primary/30 transition-colors">
         <span className={cn(
           'w-2 h-2 rounded-full',
-          runnerConnected ? 'bg-success animate-pulse-slow' : 'bg-muted'
+          runnerConnected ? 'bg-success animate-pulse-slow' : 'bg-warning animate-pulse'
         )} />
-        <span className="text-xs text-text-muted">
+        <span className="text-xs text-text-muted flex-1">
           {runnerConnected ? 'Runner 已连接' : 'Runner 未连接'}
         </span>
-      </div>
+        {!runnerConnected && <Download className="w-3 h-3 text-warning" />}
+      </NavLink>
 
       {/* Navigation */}
       <nav className="flex-1 px-3 py-4 space-y-1">

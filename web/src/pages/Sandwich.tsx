@@ -1,27 +1,20 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useStore } from '@/store'
 import { wsClient } from '@/lib/ws'
 import TokenCard from '@/components/TokenCard'
 import type { Token } from '@/lib/ws'
-import { Play, Square, Search, RefreshCw, ChevronRight } from 'lucide-react'
+import { Play, Square, Search, RefreshCw, Loader2, WifiOff } from 'lucide-react'
 import { cn, formatUSD } from '@/lib/utils'
 
-const MOCK_TOKENS: Token[] = [
-  { address: '0xabc...111', symbol: 'CAKE', name: 'PancakeSwap Token', chain: 'BSC', liquidity: 2400000, volume24h: 850000, score: 92, dex: 'PancakeSwap', pairAddress: '0x...' },
-  { address: '0xabc...222', symbol: 'DOGE2', name: 'Doge2.0', chain: 'BSC', liquidity: 180000, volume24h: 320000, score: 78, dex: 'BiSwap', pairAddress: '0x...' },
-  { address: '0xabc...333', symbol: 'PEPE', name: 'PepeCoin', chain: 'BSC', liquidity: 95000, volume24h: 210000, score: 65, dex: 'PancakeSwap', pairAddress: '0x...' },
-  { address: '0xabc...444', symbol: 'SHIB2', name: 'Shib 2.0', chain: 'BSC', liquidity: 440000, volume24h: 670000, score: 85, dex: 'BiSwap', pairAddress: '0x...' },
-  { address: '0xabc...555', symbol: 'FLOKI', name: 'FlokiInu', chain: 'BSC', liquidity: 120000, volume24h: 190000, score: 70, dex: 'PancakeSwap', pairAddress: '0x...' },
-  { address: '0xabc...666', symbol: 'BABYDOGE', name: 'Baby Doge Coin', chain: 'BSC', liquidity: 310000, volume24h: 480000, score: 81, dex: 'PancakeSwap', pairAddress: '0x...' },
-]
-
 export default function Sandwich() {
-  const { activeStrategies, strategyConfig, updateStrategyConfig, tokens, runnerConnected } = useStore()
+  const { activeStrategies, strategyConfig, updateStrategyConfig, tokens, runnerConnected, lastTokensAt } = useStore()
   const isRunning = activeStrategies['sandwich'] ?? false
   const cfg = strategyConfig.sandwich
-  const tokenList: Token[] = tokens['sandwich'] ?? MOCK_TOKENS
+  const tokenList: Token[] = tokens['sandwich'] ?? []
   const [selected, setSelected] = useState<Token | null>(null)
   const [scanning, setScanning] = useState(false)
+
+  useEffect(() => { setScanning(false) }, [lastTokensAt])
 
   const handleStartStop = () => {
     if (isRunning) {
@@ -35,9 +28,11 @@ export default function Sandwich() {
   }
 
   const handleScan = () => {
+    if (!runnerConnected) return
     setScanning(true)
     wsClient.send({ type: 'scan', payload: { strategy: 'sandwich', params: cfg } })
-    setTimeout(() => setScanning(false), 3000)
+    // Runner will respond with 'tokens' message; fallback timeout
+    setTimeout(() => setScanning(false), 30000)
   }
 
   return (
@@ -78,18 +73,68 @@ export default function Sandwich() {
         <div className="lg:col-span-2 space-y-4">
           <div className="flex items-center gap-2">
             <Search className="w-4 h-4 text-text-muted" />
-            <span className="text-sm text-text-muted">优质可夹币种 ({tokenList.length})</span>
+            <span className="text-sm text-text-muted">
+              {scanning ? '链上扫描中...' : `优质可夹币种 (${tokenList.length})`}
+            </span>
+            {tokenList.length > 0 && (
+              <span className="px-1.5 py-0.5 rounded text-xs bg-success/10 text-success border border-success/20">
+                真实数据
+              </span>
+            )}
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {tokenList.sort((a, b) => b.score - a.score).map((token) => (
-              <TokenCard
-                key={token.address}
-                token={token}
-                selected={selected?.address === token.address}
-                onSelect={setSelected}
-              />
-            ))}
-          </div>
+
+          {/* Loading state */}
+          {scanning && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="rounded-xl bg-bg-surface border border-bg-border p-4 animate-pulse">
+                  <div className="flex justify-between mb-3">
+                    <div className="space-y-1.5">
+                      <div className="h-4 w-16 bg-bg-elevated rounded" />
+                      <div className="h-3 w-24 bg-bg-elevated rounded" />
+                    </div>
+                    <div className="h-6 w-12 bg-bg-elevated rounded" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {[...Array(4)].map((_, j) => <div key={j} className="h-8 bg-bg-elevated rounded" />)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Empty state */}
+          {!scanning && tokenList.length === 0 && (
+            <div className="rounded-xl bg-bg-surface border border-bg-border p-12 text-center">
+              {runnerConnected ? (
+                <>
+                  <Search className="w-8 h-8 text-text-muted mx-auto mb-3" />
+                  <div className="text-sm text-text-muted mb-2">暂无扫描结果</div>
+                  <div className="text-xs text-text-muted">点击「扫描币种」从链上获取真实数据</div>
+                </>
+              ) : (
+                <>
+                  <WifiOff className="w-8 h-8 text-text-muted mx-auto mb-3" />
+                  <div className="text-sm text-text-muted mb-2">Runner 未连接</div>
+                  <div className="text-xs text-text-muted">启动本地 Runner 后可扫描真实链上数据</div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Token grid */}
+          {!scanning && tokenList.length > 0 && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {tokenList.sort((a, b) => b.score - a.score).map((token) => (
+                <TokenCard
+                  key={token.address}
+                  token={token}
+                  selected={selected?.address === token.address}
+                  onSelect={setSelected}
+                />
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Config panel */}

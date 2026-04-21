@@ -12,6 +12,7 @@ const TITLES: Record<string, string> = {
   '/sniper': '狙击机器人',
   '/liquidation': '清算机器人',
   '/settings': '系统设置',
+  '/download': 'Runner 下载',
 }
 
 export default function TopBar() {

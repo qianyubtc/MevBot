@@ -66,6 +66,7 @@ interface AppState {
   addTrade: (trade: Trade) => void
   addOpportunity: (opp: Opportunity) => void
   setTokens: (strategy: string, tokens: Token[]) => void
+  lastTokensAt: number
   updateConfig: (patch: Partial<Config>) => void
   updateStrategyConfig: <K extends keyof StrategyConfig>(
     strategy: K,
@@ -129,6 +130,7 @@ export const useStore = create<AppState>()(
       trades: [],
       opportunities: [],
       tokens: {},
+      lastTokensAt: 0,
       config: defaultConfig,
       strategyConfig: defaultStrategyConfig,
 
@@ -141,7 +143,7 @@ export const useStore = create<AppState>()(
       addOpportunity: (opp) =>
         set((s) => ({ opportunities: [opp, ...s.opportunities].slice(0, 100) })),
       setTokens: (strategy, tokens) =>
-        set((s) => ({ tokens: { ...s.tokens, [strategy]: tokens } })),
+        set((s) => ({ tokens: { ...s.tokens, [strategy]: tokens }, lastTokensAt: Date.now() })),
       updateConfig: (patch) =>
         set((s) => ({ config: { ...s.config, ...patch } })),
       updateStrategyConfig: (strategy, patch) =>

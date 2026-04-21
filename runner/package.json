@@ -7,7 +7,15 @@
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
     "build": "tsc",
-    "start:prod": "node dist/index.js"
+    "start:prod": "node dist/index.js",
+    "build:bin": "tsx build.ts",
+    "build:bin:mac-arm64": "tsx build.ts mac-arm64",
+    "build:bin:win": "tsx build.ts win-x64",
+    "build:bin:linux": "tsx build.ts linux-x64"
+  },
+  "pkg": {
+    "assets": [".env.example"],
+    "outputPath": "dist-bin"
   },
   "dependencies": {
     "viem": "^2.17.0",
@@ -22,6 +30,7 @@
     "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^22.0.0",
     "tsx": "^4.16.2",
-    "typescript": "^5.5.3"
+    "typescript": "^5.5.3",
+    "pkg": "^5.8.1"
   }
 }

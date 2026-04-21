@@ -7,6 +7,7 @@ import LPArbitrage from '@/pages/LPArbitrage'
 import Sniper from '@/pages/Sniper'
 import Liquidation from '@/pages/Liquidation'
 import Settings from '@/pages/Settings'
+import Download from '@/pages/Download'
 
 export default function App() {
   return (
@@ -20,6 +21,7 @@ export default function App() {
           <Route path="sniper" element={<Sniper />} />
           <Route path="liquidation" element={<Liquidation />} />
           <Route path="settings" element={<Settings />} />
+          <Route path="download" element={<Download />} />
         </Route>
       </Routes>
     </BrowserRouter>

@@ -58,6 +58,8 @@ export interface Token {
   score: number
   dex: string
   pairAddress: string
+  price?: number
+  priceUSD?: number
 }
 
 type Handler = (msg: WsMessage) => void
