@@ -50,27 +50,10 @@ jobs:
       - name: Package with pkg
         run: npx pkg dist-cjs/bundle.js --target ${{ matrix.pkg_target }} --output ${{ matrix.out }} --compress GZip
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.out }}
-          path: runner/${{ matrix.out }}
-
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: binaries
-          merge-multiple: true
-
-      - name: Create Release
+      - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
-          files: binaries/*
-          generate_release_notes: true
+          files: runner/${{ matrix.out }}
           body: |
             ## MEV Terminal Runner ${{ github.ref_name }}
 
@@ -81,11 +64,10 @@ jobs:
             | Windows 64位 | `mevbot-runner-win-x64.exe` |
             | Linux 64位 | `mevbot-runner-linux-x64` |
 
-            ### 启动方法
-            **macOS / Linux**
+            **macOS / Linux 启动：**
             ```bash
             chmod +x mevbot-runner-*
-            cp .env.example .env  # 填入 RPC_URL 和 PRIVATE_KEY
+            cp .env.example .env
             ./mevbot-runner-mac-arm64
             ```
-            **Windows**: 在同目录新建 `.env` 文件填入配置，双击 `.exe` 运行
+            **Windows：** 同目录新建 `.env` 填入配置，双击 `.exe` 运行
