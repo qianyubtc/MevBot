@@ -80,10 +80,10 @@ ws.on(async (msg, client) => {
       const bnbPrice = await scanner.getBNBPrice()
       const scannerWithPrice = new OnChainScanner(publicClient, factoryAddr, routerAddr, factoryName, bnbPrice)
       const tokens = await scannerWithPrice.scanTopPairs(24)
-      ws.broadcast({ type: 'tokens', payload: tokens })
+      ws.broadcast({ type: 'tokens', strategy: payload.strategy ?? 'sandwich', payload: tokens })
     } catch (err: any) {
       console.error(chalk.red('[Scanner] 扫描失败:'), err.message)
-      ws.broadcast({ type: 'tokens', payload: [] })
+      ws.broadcast({ type: 'tokens', strategy: payload.strategy ?? 'sandwich', payload: [] })
     }
   }
 

@@ -3,7 +3,7 @@ export type WsMessage =
   | { type: 'opportunity'; payload: Opportunity }
   | { type: 'trade'; payload: Trade }
   | { type: 'pnl'; payload: PnLSnapshot }
-  | { type: 'tokens'; payload: Token[] }
+  | { type: 'tokens'; strategy: string; payload: Token[] }
   | { type: 'connected'; payload: { version: string } }
   | { type: 'error'; payload: { message: string } }
 

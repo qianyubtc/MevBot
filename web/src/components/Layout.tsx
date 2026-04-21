@@ -36,7 +36,7 @@ export default function Layout() {
           addOpportunity(msg.payload)
           break
         case 'tokens':
-          setTokens('scan', msg.payload)
+          setTokens(msg.strategy ?? 'sandwich', msg.payload)
           break
       }
     })
