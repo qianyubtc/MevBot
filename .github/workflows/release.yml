@@ -17,7 +17,7 @@ jobs:
           - os: macos-latest
             pkg_target: node18-macos-arm64
             out: mevbot-runner-mac-arm64
-          - os: macos-13
+          - os: ubuntu-latest
             pkg_target: node18-macos-x64
             out: mevbot-runner-mac-x64
           - os: ubuntu-latest
