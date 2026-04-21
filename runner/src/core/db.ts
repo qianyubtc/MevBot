@@ -1,32 +1,12 @@
-import Database from 'better-sqlite3'
 import { join } from 'path'
 import { homedir } from 'os'
-import { mkdirSync } from 'fs'
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'fs'
 
 const DB_DIR = join(homedir(), '.mevbot')
 mkdirSync(DB_DIR, { recursive: true })
 
-const db = new Database(join(DB_DIR, 'data.db'))
-
-db.exec(`
-  CREATE TABLE IF NOT EXISTS trades (
-    id TEXT PRIMARY KEY,
-    strategy TEXT NOT NULL,
-    token TEXT NOT NULL,
-    tx_hash TEXT,
-    chain TEXT NOT NULL,
-    profit_usd REAL NOT NULL,
-    gas_usd REAL NOT NULL,
-    status TEXT NOT NULL,
-    timestamp INTEGER NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS pnl_snapshots (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp INTEGER NOT NULL,
-    value REAL NOT NULL
-  );
-`)
+const TRADES_FILE = join(DB_DIR, 'trades.json')
+const SNAPSHOTS_FILE = join(DB_DIR, 'snapshots.json')
 
 export interface TradeRecord {
   id: string
@@ -40,58 +20,60 @@ export interface TradeRecord {
   timestamp: number
 }
 
-const insertTrade = db.prepare<TradeRecord>(`
-  INSERT OR REPLACE INTO trades
-  (id, strategy, token, tx_hash, chain, profit_usd, gas_usd, status, timestamp)
-  VALUES (@id, @strategy, @token, @txHash, @chain, @profitUSD, @gasUSD, @status, @timestamp)
-`)
+interface Snapshot {
+  t: number
+  v: number
+}
 
-const insertSnapshot = db.prepare<{ timestamp: number; value: number }>(
-  'INSERT INTO pnl_snapshots (timestamp, value) VALUES (@timestamp, @value)'
-)
+function readJSON<T>(file: string, fallback: T): T {
+  try {
+    if (!existsSync(file)) return fallback
+    return JSON.parse(readFileSync(file, 'utf-8')) as T
+  } catch {
+    return fallback
+  }
+}
 
-const getTodayTrades = db.prepare<[]>(`
-  SELECT * FROM trades
-  WHERE timestamp > ? AND status = 'success'
-  ORDER BY timestamp DESC
-`)
-
-const getAllTimeProfit = db.prepare<[]>(`
-  SELECT COALESCE(SUM(profit_usd - gas_usd), 0) as total FROM trades WHERE status = 'success'
-`)
-
-const getHistory = db.prepare<[]>(`
-  SELECT timestamp, value FROM pnl_snapshots
-  ORDER BY timestamp ASC
-  LIMIT 288
-`)
+function writeJSON(file: string, data: unknown) {
+  writeFileSync(file, JSON.stringify(data), 'utf-8')
+}
 
 export function saveTrade(trade: TradeRecord) {
-  insertTrade.run(trade)
+  const trades = readJSON<TradeRecord[]>(TRADES_FILE, [])
+  const idx = trades.findIndex((t) => t.id === trade.id)
+  if (idx >= 0) trades[idx] = trade
+  else trades.unshift(trade)
+  // Keep last 2000 trades
+  writeJSON(TRADES_FILE, trades.slice(0, 2000))
 }
 
 export function saveSnapshot(value: number) {
-  insertSnapshot.run({ timestamp: Date.now(), value })
+  const snaps = readJSON<Snapshot[]>(SNAPSHOTS_FILE, [])
+  snaps.push({ t: Date.now(), v: value })
+  // Keep last 288 snapshots (24h at 5min intervals)
+  writeJSON(SNAPSHOTS_FILE, snaps.slice(-288))
 }
 
 export function getPnLSummary() {
-  const todayStart = new Date().setHours(0, 0, 0, 0)
-  const todayTrades = getTodayTrades.all(todayStart) as any[]
-  const todayUSD = todayTrades.reduce((s, t) => s + t.profit_usd - t.gas_usd, 0)
-  const { total } = getAllTimeProfit.get() as any
+  const trades = readJSON<TradeRecord[]>(TRADES_FILE, [])
+  const snaps = readJSON<Snapshot[]>(SNAPSHOTS_FILE, [])
 
-  const history = (getHistory.all() as any[]).map((r) => ({ t: r.timestamp, v: r.value }))
-  const winCount = todayTrades.filter((t) => t.profit_usd > t.gas_usd).length
+  const todayStart = new Date().setHours(0, 0, 0, 0)
+  const todayTrades = trades.filter((t) => t.timestamp > todayStart && t.status === 'success')
+  const todayUSD = todayTrades.reduce((s, t) => s + t.profitUSD - t.gasUSD, 0)
+
+  const allSuccess = trades.filter((t) => t.status === 'success')
+  const totalUSD = allSuccess.reduce((s, t) => s + t.profitUSD - t.gasUSD, 0)
+
+  const winCount = todayTrades.filter((t) => t.profitUSD > t.gasUSD).length
   const winRate = todayTrades.length > 0 ? (winCount / todayTrades.length) * 100 : 0
 
   return {
-    totalUSD: total ?? 0,
+    totalUSD,
     todayUSD,
     weekUSD: 0,
     totalTrades: todayTrades.length,
     winRate,
-    history,
+    history: snaps,
   }
 }
-
-export default db

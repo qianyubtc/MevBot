@@ -11,19 +11,20 @@ permissions:
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            platform: linux-x64
-            out: mevbot-runner-linux-x64
           - os: macos-latest
-            platform: mac-arm64
+            pkg_target: node18-macos-arm64
             out: mevbot-runner-mac-arm64
           - os: macos-13
-            platform: mac-x64
+            pkg_target: node18-macos-x64
             out: mevbot-runner-mac-x64
+          - os: ubuntu-latest
+            pkg_target: node18-linux-x64
+            out: mevbot-runner-linux-x64
           - os: windows-latest
-            platform: win-x64
+            pkg_target: node18-win-x64
             out: mevbot-runner-win-x64.exe
 
     runs-on: ${{ matrix.os }}
@@ -36,26 +37,18 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '18'
           cache: 'npm'
           cache-dependency-path: runner/package-lock.json
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Install pkg
-        run: npm install -g pkg
+      - name: Bundle with esbuild
+        run: npx esbuild src/index.ts --bundle --platform=node --target=node18 --format=cjs --outfile=dist-cjs/bundle.js
 
-      - name: Compile TypeScript (CommonJS)
-        run: npx tsc -p tsconfig.pkg.json
-
-      - name: Build binary
-        run: |
-          pkg dist-cjs/index.js \
-            --target node18-${{ matrix.platform == 'mac-arm64' && 'macos-arm64' || matrix.platform == 'mac-x64' && 'macos-x64' || matrix.platform == 'win-x64' && 'win-x64' || 'linux-x64' }} \
-            --output ${{ matrix.out }} \
-            --compress GZip
-        shell: bash
+      - name: Package with pkg
+        run: npx pkg dist-cjs/bundle.js --target ${{ matrix.pkg_target }} --output ${{ matrix.out }} --compress GZip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -81,8 +74,6 @@ jobs:
           body: |
             ## MEV Terminal Runner ${{ github.ref_name }}
 
-            ### 下载说明
-
             | 平台 | 文件 |
             |------|------|
             | macOS Apple Silicon (M1/M2/M3) | `mevbot-runner-mac-arm64` |
@@ -91,16 +82,10 @@ jobs:
             | Linux 64位 | `mevbot-runner-linux-x64` |
 
             ### 启动方法
-
             **macOS / Linux**
             ```bash
             chmod +x mevbot-runner-*
-            cp .env.example .env   # 填入 RPC_URL 和 PRIVATE_KEY
+            cp .env.example .env  # 填入 RPC_URL 和 PRIVATE_KEY
             ./mevbot-runner-mac-arm64
             ```
-
-            **Windows**
-            ```
-            # 在同目录新建 .env 文件，填入配置
-            双击 mevbot-runner-win-x64.exe
-            ```
+            **Windows**: 在同目录新建 `.env` 文件填入配置，双击 `.exe` 运行
