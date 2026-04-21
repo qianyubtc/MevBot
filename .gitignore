@@ -6,6 +6,9 @@ runner/node_modules/
 # Build output
 web/dist/
 runner/dist/
+runner/dist-cjs/
+runner/dist-bin/
+runner/mevbot-runner-*
 
 # Env files (never commit private keys!)
 runner/.env
