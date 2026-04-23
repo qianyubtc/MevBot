@@ -35,11 +35,11 @@ const DEFAULTS: RunnerConfig = {
 
 export function loadConfig(): RunnerConfig {
   // Priority: config.json > .env > defaults
-  const fromEnv: Partial<RunnerConfig> = {
-    chain: process.env.CHAIN,
-    rpcUrl: process.env.RPC_URL,
-    privateKey: process.env.PRIVATE_KEY,
-  }
+  // Only include env vars that are actually set (avoid overriding defaults with undefined)
+  const fromEnv: Partial<RunnerConfig> = {}
+  if (process.env.CHAIN) fromEnv.chain = process.env.CHAIN
+  if (process.env.RPC_URL) fromEnv.rpcUrl = process.env.RPC_URL
+  if (process.env.PRIVATE_KEY) fromEnv.privateKey = process.env.PRIVATE_KEY
 
   let fromFile: Partial<RunnerConfig> = {}
   try {
