@@ -1,9 +1,21 @@
 import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage } from 'electron'
 import path from 'path'
-import { startRunner, onLog } from './runner'
+import { startRunner, onLog, LogLine } from './runner'
 
 let win: BrowserWindow | null = null
 let tray: Tray | null = null
+let runnerStarted = false
+
+// Buffer logs emitted before the renderer is ready
+const logBuffer: LogLine[] = []
+const MAX_BUF = 500
+
+onLog((line) => {
+  logBuffer.push(line)
+  if (logBuffer.length > MAX_BUF) logBuffer.shift()
+  // Send to renderer if window exists
+  win?.webContents.send('log', line)
+})
 
 function createWindow() {
   win = new BrowserWindow({
@@ -24,9 +36,17 @@ function createWindow() {
 
   win.loadFile(path.join(__dirname, '../ui/index.html'))
 
-  // Forward runner logs → renderer
-  onLog((line) => {
-    win?.webContents.send('log', line)
+  // When renderer finishes loading, replay buffered logs then start runner
+  win.webContents.on('did-finish-load', async () => {
+    // Replay any logs already buffered (shouldn't happen on first load, but safe)
+    for (const line of logBuffer) {
+      win?.webContents.send('log', line)
+    }
+    // Start runner once, on first window load
+    if (!runnerStarted) {
+      runnerStarted = true
+      await startRunner()
+    }
   })
 
   win.on('close', (e) => {
@@ -50,10 +70,9 @@ function createTray() {
   tray.on('click', () => win?.show())
 }
 
-app.whenReady().then(async () => {
+app.whenReady().then(() => {
   createWindow()
   createTray()
-  await startRunner()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -65,5 +84,5 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-// IPC: renderer can request config sync
-ipcMain.handle('get-status', () => ({ running: true }))
+// IPC: renderer can request status
+ipcMain.handle('get-status', () => ({ running: runnerStarted }))
