@@ -8,9 +8,9 @@
     "dev": "concurrently \"tsc -w\" \"electron .\"",
     "build": "tsc",
     "start": "electron .",
-    "pack:mac": "npx esbuild src/main.ts src/preload.ts src/runner.ts --platform=node --target=node20 --format=cjs --outdir=dist --external:electron && electron-builder --mac",
-    "pack:win": "npx esbuild src/main.ts src/preload.ts src/runner.ts --platform=node --target=node20 --format=cjs --outdir=dist --external:electron && electron-builder --win",
-    "pack:linux": "npx esbuild src/main.ts src/preload.ts src/runner.ts --platform=node --target=node20 --format=cjs --outdir=dist --external:electron && electron-builder --linux"
+    "pack:mac": "npx esbuild src/main.ts src/preload.ts src/runner.ts --platform=node --target=node20 --format=cjs --outdir=dist && electron-builder --mac",
+    "pack:win": "npx esbuild src/main.ts src/preload.ts src/runner.ts --platform=node --target=node20 --format=cjs --outdir=dist && electron-builder --win",
+    "pack:linux": "npx esbuild src/main.ts src/preload.ts src/runner.ts --platform=node --target=node20 --format=cjs --outdir=dist && electron-builder --linux"
   },
   "build": {
     "appId": "com.mevterminal.runner",
