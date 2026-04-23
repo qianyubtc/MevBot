@@ -41,7 +41,7 @@ export async function startRunner() {
   // In dev: load from runner/src
   try {
     const runnerPath = app.isPackaged
-      ? join(process.resourcesPath, 'runner-bundle.js')
+      ? join(__dirname, '../assets/runner-bundle.js')
       : join(__dirname, '../../runner/dist-cjs/bundle.js')
     require(runnerPath)
     emit('info', '✓ MEV Terminal Runner 已启动')

@@ -50,10 +50,6 @@ jobs:
       - name: Copy runner bundle
         run: cp runner/dist-cjs/bundle.js runner-app/assets/runner-bundle.js
 
-      - name: Build TypeScript
-        working-directory: runner-app
-        run: npx tsc
-
       - name: Package Electron app
         working-directory: runner-app
         run: npm run pack:${{ matrix.platform }}

@@ -8,16 +8,15 @@
     "dev": "concurrently \"tsc -w\" \"electron .\"",
     "build": "tsc",
     "start": "electron .",
-    "pack:mac": "npm run build && electron-builder --mac",
-    "pack:win": "npm run build && electron-builder --win",
-    "pack:linux": "npm run build && electron-builder --linux"
+    "pack:mac": "npx esbuild src/main.ts src/preload.ts src/runner.ts --platform=node --target=node20 --format=cjs --outdir=dist --external:electron && electron-builder --mac",
+    "pack:win": "npx esbuild src/main.ts src/preload.ts src/runner.ts --platform=node --target=node20 --format=cjs --outdir=dist --external:electron && electron-builder --win",
+    "pack:linux": "npx esbuild src/main.ts src/preload.ts src/runner.ts --platform=node --target=node20 --format=cjs --outdir=dist --external:electron && electron-builder --linux"
   },
   "build": {
     "appId": "com.mevterminal.runner",
     "productName": "MEV Terminal",
     "icon": "assets/icon",
     "files": ["dist/**/*", "ui/**/*", "assets/**/*"],
-    "extraResources": [{ "from": "../runner/src", "to": "runner-src" }],
     "mac": {
       "category": "public.app-category.finance",
       "target": [{ "target": "dmg", "arch": ["x64", "arm64"] }]
@@ -39,6 +38,7 @@
   "devDependencies": {
     "electron": "^31.0.0",
     "electron-builder": "^24.13.3",
+    "esbuild": "^0.23.0",
     "concurrently": "^8.2.2",
     "typescript": "^5.5.3",
     "@types/node": "^22.0.0",
