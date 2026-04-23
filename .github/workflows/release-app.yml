@@ -1,0 +1,69 @@
+name: Release Electron App
+
+on:
+  push:
+    tags:
+      - 'app-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: mac
+            out_ext: dmg
+          - os: windows-latest
+            platform: win
+            out_ext: exe
+          - os: ubuntu-latest
+            platform: linux
+            out_ext: AppImage
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Build runner bundle first
+      - name: Install runner deps
+        working-directory: runner
+        run: npm ci
+
+      - name: Bundle runner
+        working-directory: runner
+        run: npx esbuild src/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist-cjs/bundle.js
+
+      # Build Electron app
+      - name: Install app deps
+        working-directory: runner-app
+        run: npm ci
+
+      - name: Copy runner bundle
+        run: cp runner/dist-cjs/bundle.js runner-app/assets/runner-bundle.js
+
+      - name: Build TypeScript
+        working-directory: runner-app
+        run: npx tsc
+
+      - name: Package Electron app
+        working-directory: runner-app
+        run: npm run pack:${{ matrix.platform }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            runner-app/dist/*.dmg
+            runner-app/dist/*.exe
+            runner-app/dist/*.AppImage
