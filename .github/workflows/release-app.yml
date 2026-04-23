@@ -50,11 +50,16 @@ jobs:
       - name: Copy runner bundle
         run: cp runner/dist-cjs/bundle.js runner-app/assets/runner-bundle.js
 
+      - name: Compile TypeScript
+        working-directory: runner-app
+        run: npx tsc
+
       - name: Package Electron app
         working-directory: runner-app
-        run: npm run pack:${{ matrix.platform }}
+        run: npx electron-builder --${{ matrix.platform }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v2

@@ -8,9 +8,9 @@
     "dev": "concurrently \"tsc -w\" \"electron .\"",
     "build": "tsc",
     "start": "electron .",
-    "pack:mac": "npx esbuild src/main.ts src/preload.ts src/runner.ts --platform=node --target=node20 --format=cjs --outdir=dist && electron-builder --mac",
-    "pack:win": "npx esbuild src/main.ts src/preload.ts src/runner.ts --platform=node --target=node20 --format=cjs --outdir=dist && electron-builder --win",
-    "pack:linux": "npx esbuild src/main.ts src/preload.ts src/runner.ts --platform=node --target=node20 --format=cjs --outdir=dist && electron-builder --linux"
+    "pack:mac": "electron-builder --mac",
+    "pack:win": "electron-builder --win",
+    "pack:linux": "electron-builder --linux"
   },
   "build": {
     "appId": "com.mevterminal.runner",
@@ -38,7 +38,6 @@
   "devDependencies": {
     "electron": "^31.0.0",
     "electron-builder": "^24.13.3",
-    "esbuild": "^0.23.0",
     "concurrently": "^8.2.2",
     "typescript": "^5.5.3",
     "@types/node": "^22.0.0",
