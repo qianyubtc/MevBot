@@ -56,9 +56,8 @@ jobs:
 
       - name: Package Electron app
         working-directory: runner-app
-        run: npx electron-builder --${{ matrix.platform }}
+        run: npx electron-builder --${{ matrix.platform }} --publish never
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
       - name: Upload to Release
