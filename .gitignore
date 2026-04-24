@@ -10,6 +10,8 @@ runner/dist-cjs/
 runner/dist-bin/
 runner/mevbot-runner-*
 runner-app/dist/
+runner-app/release/
+runner-app/assets/runner-bundle.js
 runner-app/node_modules/
 
 # Env files (never commit private keys!)

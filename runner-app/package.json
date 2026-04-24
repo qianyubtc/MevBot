@@ -1,6 +1,6 @@
 {
   "name": "mevbot-app",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "description": "MEV Terminal Runner",
   "main": "dist/main.js",
   "private": true,
@@ -16,7 +16,22 @@
     "appId": "com.mevterminal.runner",
     "productName": "MEV Terminal",
     "icon": "assets/icon",
-    "files": ["dist/**/*", "ui/**/*", "assets/**/*"],
+    "directories": { "output": "release" },
+    "files": [
+      "dist/**/*",
+      "ui/**/*",
+      "assets/**/*",
+      "!dist/mac${/*}",
+      "!dist/mac-arm64${/*}",
+      "!dist/win-unpacked${/*}",
+      "!dist/linux-unpacked${/*}",
+      "!dist/*.dmg",
+      "!dist/*.blockmap",
+      "!dist/*.yml",
+      "!dist/*.exe",
+      "!dist/*.AppImage",
+      "!dist/builder-*"
+    ],
     "mac": {
       "category": "public.app-category.finance",
       "icon": "assets/icon.icns",
