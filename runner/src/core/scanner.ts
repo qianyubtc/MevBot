@@ -68,38 +68,18 @@ export class OnChainScanner {
   async scanTopPairs(limit = 24): Promise<ScannedToken[]> {
     console.log(chalk.cyan(`[Scanner] 扫描 ${this.dexName} 优质交易对...`))
 
-    // Known high-liquidity PancakeSwap v2 pair addresses on BSC
-    // These are established pairs with real sandwich opportunity
-    const KNOWN_PAIRS: Address[] = [
+    // Stable fallback pairs (used only if dynamic scan fails)
+    const FALLBACK_PAIRS: Address[] = [
       '0x58F876857a02D6762E0101bb5C46A8c1ED44Dc16', // BNB/BUSD
-      '0x16b9a82891338f9bA80E2D6970FddA79D1eb0daE', // BNB/USDT
-      '0x7EFaEf62fDdCCa950418312c6C702357a7cf9bb5', // USDT/BUSD
       '0x61EB789d75A95CAa3fF50ed7E47b96c132fEc082', // BTCB/BNB
       '0x74E4716E431f45807DCF19f284c7aA99F18a4fbc', // ETH/BNB
       '0x0eD7e52944161450477ee417DE9Cd3a859b14fD0', // CAKE/BNB
-      '0xbCD62661A6b1DEd703585d3aF7d7649Ef4dcDB5C', // CAKE/BUSD
-      '0x2354ef4DF11afacb85a5C7f98B624072ECcddbB1', // USDC/BUSD
-      '0xEc6557348085Aa57C72514D67070dC863C0a5A8c', // BNB/USDC
-      '0x20bCC3b8a0091dDac2d0BC30F68E6CBb97de59Cd', // ETH/BUSD
-      '0xF45cd219aEF8618A92BAa7aD848364a158a24F33', // DOT/BNB
-      '0xBa51D1AB95756ca4eaB8197eab89Edd8c04C8B6c', // ADA/BNB
-      '0x36696169C63e42cd08ce11f5deeBbCeBae652050', // LINK/BNB
-      '0xaeBE45E3a03B734c68e5557AE04BFC76917B4686', // XRP/BNB
-      '0x903d78CA8D9606E6C95BA87bBa87a48c7f6E273A', // MATIC/BNB
-      '0x7a34BD64d18e44CfdE3ef4B81b87BAf3EB3315B3', // UNI/BNB
-      '0x66FDB2eCCfB58cF098eaa419e5EfDe841368e489', // DAI/BNB
-      '0x4576C456AF93a37a096235e5d83f812AC9aeD027', // LTC/BNB
-      '0x3f803EC2b816Ea7F06EC76aA2B6f2532F9892d62', // BCH/BNB
-      '0x005769C3f6CB9c21A9d39E54FdCb16b2aef44c41', // AVAX/BNB
-      '0x59354356Ec5d56306791873f567d61EBf11dfbD5', // SOL/BNB
-      '0xD1B59D11316E87C3a0A069E80F590BA35cD8D8D3', // ATOM/BNB
-      '0xf1bE8ecC990cBcb90e166b71a17AeE46173F4050', // XVS/BNB
-      '0x8CA3bf2B8E0F06b06Cf9D4d8b5f14E8C5CF59a00', // ALPACA/BNB
+      '0x16b9a82891338f9bA80E2D6970FddA79D1eb0daE', // BNB/USDT
     ]
 
     try {
-      // Also dynamically get some recent pairs to mix in
-      let dynamicPairs: Address[] = []
+      // ── Dynamic scan: sample random pairs from recent 5000 ──────────────
+      let pairsToScan: Address[] = []
       try {
         const totalPairs = await this.client.readContract({
           address: this.factoryAddress,
@@ -107,35 +87,49 @@ export class OnChainScanner {
           functionName: 'allPairsLength',
         })
         const total = Number(totalPairs)
-        // Sample pairs from recent 500 (not just newest, to find active ones)
-        const sampleSize = 30
+        console.log(chalk.dim(`[Scanner] 工厂共有 ${total} 个交易对，随机采样中...`))
+
+        // Sample from different "zones" of recent pairs for diversity
+        const sampleSize = 120
+        const searchDepth = Math.min(total, 5000)
         const indices = Array.from({ length: sampleSize }, () =>
-          BigInt(total - 1 - Math.floor(Math.random() * 500))
+          BigInt(total - 1 - Math.floor(Math.random() * searchDepth))
         )
+        // Deduplicate indices
+        const uniqueIndices = [...new Set(indices.map(String))].map(BigInt)
+
         const results = await Promise.allSettled(
-          indices.map((i) => this.client.readContract({
+          uniqueIndices.map((i) => this.client.readContract({
             address: this.factoryAddress,
             abi: FACTORY_ABI,
             functionName: 'allPairs',
             args: [i],
           }))
         )
-        dynamicPairs = results
+        pairsToScan = results
           .filter((r): r is PromiseFulfilledResult<Address> => r.status === 'fulfilled')
           .map((r) => r.value)
-      } catch {}
+      } catch (e: any) {
+        console.warn(chalk.yellow('[Scanner] 动态采样失败，使用备用列表'), e.message)
+        pairsToScan = FALLBACK_PAIRS
+      }
 
-      const allPairs = [...new Set([...KNOWN_PAIRS, ...dynamicPairs])]
+      // Mix in fallback pairs (always include some reliable liquidity anchors)
+      const allPairs = [...new Set([...FALLBACK_PAIRS, ...pairsToScan])]
       console.log(chalk.dim(`[Scanner] 分析 ${allPairs.length} 个交易对...`))
 
-      const results = await Promise.allSettled(
-        allPairs.map((addr) => this.analyzePair(addr))
-      )
+      // Analyze in batches to avoid overwhelming the RPC
+      const BATCH = 20
+      const analyzed: ScannedToken[] = []
+      for (let i = 0; i < allPairs.length; i += BATCH) {
+        const batch = allPairs.slice(i, i + BATCH)
+        const results = await Promise.allSettled(batch.map((addr) => this.analyzePair(addr)))
+        results.forEach((r) => {
+          if (r.status === 'fulfilled' && r.value) analyzed.push(r.value)
+        })
+      }
 
-      const tokens = results
-        .filter((r): r is PromiseFulfilledResult<ScannedToken | null> => r.status === 'fulfilled')
-        .map((r) => r.value)
-        .filter((t): t is ScannedToken => t !== null)
+      const tokens = analyzed
         .sort((a, b) => b.score - a.score)
         .slice(0, limit)
 

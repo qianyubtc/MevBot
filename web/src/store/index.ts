@@ -21,7 +21,11 @@ export interface StrategyConfig {
   sandwich: {
     minProfitUSD: number
     maxGasGwei: number
+    priorityGasMultiplier: number
     minLiquidityUSD: number
+    executionAmountUSD: number
+    slippageTolerance: number
+    maxConcurrent: number
     targetDexes: string[]
     enabled: boolean
   }
@@ -91,7 +95,11 @@ const defaultStrategyConfig: StrategyConfig = {
   sandwich: {
     minProfitUSD: 5,
     maxGasGwei: 10,
+    priorityGasMultiplier: 2,
     minLiquidityUSD: 50000,
+    executionAmountUSD: 200,
+    slippageTolerance: 0.5,
+    maxConcurrent: 2,
     targetDexes: ['PancakeSwap', 'BiSwap'],
     enabled: false,
   },

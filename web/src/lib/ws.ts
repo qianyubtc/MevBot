@@ -4,6 +4,7 @@ export type WsMessage =
   | { type: 'trade'; payload: Trade }
   | { type: 'pnl'; payload: PnLSnapshot }
   | { type: 'tokens'; strategy: string; payload: Token[] }
+  | { type: 'token_analyzed'; payload: Token }
   | { type: 'connected'; payload: { version: string } }
   | { type: 'error'; payload: { message: string } }
 
