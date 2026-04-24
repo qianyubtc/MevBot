@@ -66,7 +66,8 @@ interface AppState {
   strategyConfig: StrategyConfig
   lastTokensAt: number
   walletBalance: number | null
-  sandwichSelectedToken: Token | null
+  sandwichSelectedToken: Token | null   // user's current highlight/preview selection
+  sandwichRunningToken: Token | null    // snapshot of what was actually started — never changes while running
   setRunnerConnected: (v: boolean) => void
   setStrategyRunning: (strategy: string, running: boolean) => void
   setPnL: (pnl: PnLSnapshot) => void
@@ -81,6 +82,7 @@ interface AppState {
     patch: Partial<StrategyConfig[K]>
   ) => void
   setSandwichSelectedToken: (token: Token | null) => void
+  setSandwichRunningToken: (token: Token | null) => void
 }
 
 const defaultConfig: Config = {
@@ -146,6 +148,7 @@ export const useStore = create<AppState>()(
       lastTokensAt: 0,
       walletBalance: null,
       sandwichSelectedToken: null,
+      sandwichRunningToken: null,
       config: defaultConfig,
       strategyConfig: defaultStrategyConfig,
 
@@ -161,6 +164,7 @@ export const useStore = create<AppState>()(
         set((s) => ({ tokens: { ...s.tokens, [strategy]: tokens }, lastTokensAt: Date.now() })),
       setWalletBalance: (v) => set({ walletBalance: v }),
       setSandwichSelectedToken: (token) => set({ sandwichSelectedToken: token }),
+      setSandwichRunningToken: (token) => set({ sandwichRunningToken: token }),
       resetLocalData: () => set({ trades: [], opportunities: [], pnl: null }),
       updateConfig: (patch) =>
         set((s) => ({ config: { ...s.config, ...patch } })),
@@ -174,7 +178,12 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'mevbot-store',
-      partialize: (s) => ({ config: s.config, strategyConfig: s.strategyConfig, sandwichSelectedToken: s.sandwichSelectedToken }),
+      partialize: (s) => ({
+        config: s.config,
+        strategyConfig: s.strategyConfig,
+        sandwichSelectedToken: s.sandwichSelectedToken,
+        sandwichRunningToken: s.sandwichRunningToken,
+      }),
     }
   )
 )

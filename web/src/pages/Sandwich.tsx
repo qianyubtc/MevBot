@@ -71,14 +71,17 @@ export default function Sandwich() {
     activeStrategies, strategyConfig, updateStrategyConfig,
     tokens, config, runnerConnected, lastTokensAt, setTokens,
     sandwichSelectedToken, setSandwichSelectedToken,
+    sandwichRunningToken, setSandwichRunningToken,
   } = useStore()
   const isRunning = activeStrategies['sandwich'] ?? false
   const cfg = strategyConfig.sandwich
   const tokenList: Token[] = tokens['sandwich'] ?? []
 
-  // Use store-persisted selected so it survives page navigation
+  // "selected" = what the user highlights/previews (changes freely)
+  // "runningToken" = snapshot of what was actually started (frozen while running)
   const selected = sandwichSelectedToken
   const setSelected = (token: Token | null) => setSandwichSelectedToken(token)
+  const runningToken = sandwichRunningToken
 
   const [scanning, setScanning] = useState(false)
   const [caInput, setCaInput] = useState('')
@@ -130,6 +133,7 @@ export default function Sandwich() {
     setStartError('')
     if (isRunning) {
       wsClient.send({ type: 'stop', payload: { strategy: 'sandwich' } })
+      setSandwichRunningToken(null)   // clear the running snapshot on stop
       return
     }
     if (!config.privateKey) {
@@ -137,6 +141,7 @@ export default function Sandwich() {
       return
     }
     if (!selected) return
+    setSandwichRunningToken(selected)  // freeze the target for the duration of this run
     wsClient.send({ type: 'start', payload: { strategy: 'sandwich', token: selected, config: cfg } })
   }
 
@@ -299,7 +304,7 @@ export default function Sandwich() {
         <div className="space-y-4">
 
           {/* ── Running state: big combined widget ── */}
-          {isRunning && selected ? (
+          {isRunning && runningToken ? (
             <div className="rounded-xl border border-success/40 bg-success/5 p-4 space-y-3">
               {/* Header */}
               <div className="flex items-center justify-between">
@@ -322,16 +327,16 @@ export default function Sandwich() {
                 </div>
                 <div className="flex items-start justify-between">
                   <div>
-                    <div className="font-mono font-bold text-white text-base">{selected.symbol}</div>
-                    <div className="text-xs text-text-muted mt-0.5">{selected.dex}</div>
+                    <div className="font-mono font-bold text-white text-base">{runningToken.symbol}</div>
+                    <div className="text-xs text-text-muted mt-0.5">{runningToken.dex}</div>
                   </div>
                   <div className="text-right">
                     <div className="text-xs text-text-muted">流动性</div>
-                    <div className="text-sm font-mono text-white">{formatUSD(selected.liquidity)}</div>
+                    <div className="text-sm font-mono text-white">{formatUSD(runningToken.liquidity)}</div>
                   </div>
                 </div>
                 <div className="font-mono text-xs text-text-muted mt-2 break-all leading-relaxed">
-                  {selected.address}
+                  {runningToken.address}
                 </div>
               </div>
 
