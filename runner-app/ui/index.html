@@ -151,12 +151,31 @@
       return str.replace(/\x1B\[[0-9;]*m/g, '')
     }
 
+    const footerStatusEl = document.getElementById('footerStatus')
+    let webConnected = false
+
+    function updateFooter() {
+      footerStatusEl.textContent = webConnected
+        ? 'Runner 运行中 · Web 已连接 ✓'
+        : 'Runner 运行中 · 等待 Web 连接'
+      footerStatusEl.style.color = webConnected ? '#00d4aa' : '#64748b'
+    }
+
     function addLog(line) {
       logCount++
       logCountEl.textContent = logCount
 
       const stripped = stripAnsi(line.text)
       if (!stripped.trim()) return
+
+      // Detect WS client connect/disconnect from log messages
+      if (stripped.includes('客户端已连接')) {
+        webConnected = true
+        updateFooter()
+      } else if (stripped.includes('客户端断开') && stripped.includes('当前连接数: 0')) {
+        webConnected = false
+        updateFooter()
+      }
 
       const div = document.createElement('div')
       div.className = 'log-line'
@@ -183,8 +202,9 @@
     }
 
     function openWeb() {
-      // Open the web panel in default browser
-      require('electron').shell.openExternal('https://mevbot.qianyubtc.com')
+      if (window.mevbot?.openExternal) {
+        window.mevbot.openExternal('https://mevbot.qianyubtc.com')
+      }
     }
   </script>
 </body>

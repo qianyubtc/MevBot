@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage } from 'electron'
+import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, shell } from 'electron'
 import path from 'path'
 import { startRunner, onLog, LogLine } from './runner'
 
@@ -86,3 +86,4 @@ app.on('window-all-closed', () => {
 
 // IPC: renderer can request status
 ipcMain.handle('get-status', () => ({ running: runnerStarted }))
+ipcMain.handle('open-external', (_e, url: string) => shell.openExternal(url))

@@ -21,4 +21,5 @@ contextBridge.exposeInMainWorld('mevbot', {
     queued.forEach(cb)
   },
   getStatus: () => ipcRenderer.invoke('get-status'),
+  openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
 })
