@@ -100,7 +100,7 @@ const defaultStrategyConfig: StrategyConfig = {
     maxGasGwei: 10,
     priorityGasMultiplier: 2,
     minLiquidityUSD: 50000,
-    executionAmountUSD: 200,
+    executionAmountUSD: 5,
     slippageTolerance: 0.5,
     maxConcurrent: 2,
     targetDexes: ['PancakeSwap', 'BiSwap'],
