@@ -48,9 +48,10 @@ async function parallelMap<T>(
 function classifyRpcError(err: any): {
   unsupported: boolean
   filterExpired: boolean
+  socketClosed: boolean
   short: string
 } {
-  const raw = String(err?.message ?? err ?? '').toLowerCase()
+  const raw = String(err?.shortMessage ?? err?.message ?? err ?? '').toLowerCase()
   const status = err?.status ?? err?.cause?.status
   // "filter not found" means the RPC evicted our polling filter (most HTTP
   // RPCs expire idle filters after ~5min or even ~5s under memory pressure).
@@ -59,6 +60,20 @@ function classifyRpcError(err: any): {
     raw.includes('filter not found') ||
     raw.includes('filter id') ||
     raw.includes('invalid filter')
+  // WSS socket died mid-stream — GFW/firewall/idle timeout/server restart.
+  // Recoverable: tear down the dead subscription and rebuild.
+  const socketClosed =
+    !filterExpired && (
+      raw.includes('socket has been closed') ||
+      raw.includes('socket is closed') ||
+      raw.includes('websocket') ||
+      raw.includes('connection closed') ||
+      raw.includes('connection terminated') ||
+      raw.includes('econnreset') ||
+      raw.includes('client network socket disconnected') ||
+      raw.includes('tls connection') ||
+      raw.includes('ws is not open')
+    )
   const unsupported =
     !filterExpired && (
       status === 403 || status === 405 ||
@@ -69,7 +84,7 @@ function classifyRpcError(err: any): {
       raw.includes('not available')
     )
   const short = String(err?.shortMessage ?? err?.message ?? err ?? '').split('\n')[0].slice(0, 180)
-  return { unsupported, filterExpired, short }
+  return { unsupported, filterExpired, socketClosed, short }
 }
 
 export class MempoolMonitor {
@@ -81,6 +96,7 @@ export class MempoolMonitor {
   private lastErrorLogAt = 0
   private guidanceShown = false
   private wssGuidanceShown = false
+  private socketGuidanceShown = false
   private activeUnwatch?: () => void
   private reconnectTimer?: NodeJS.Timeout
   private reconnectAttempt = 0
@@ -121,6 +137,26 @@ export class MempoolMonitor {
       '             • wss://bsc-rpc.publicnode.com\n' +
       '             • wss://bsc.callstaticrpc.com\n' +
       '           已启用自动重建 filter，但延迟/漏单会增加。'
+    ))
+  }
+
+  // Print guidance once if WSS keeps getting closed — likely GFW / unstable
+  // public endpoint. Steer the user to alternatives.
+  private showSocketGuidance() {
+    if (this.socketGuidanceShown) return
+    this.socketGuidanceShown = true
+    console.error(chalk.red(
+      '[Mempool] ✗ WSS 连接反复断开 — 当前 RPC 在你的网络下不稳定（常见：公用节点被限流或网络被阻断）。\n' +
+      '          建议依次尝试以下节点（在「设置」页切换后重启夹子）：\n' +
+      '            • wss://bsc.callstaticrpc.com\n' +
+      '            • wss://bsc-rpc.publicnode.com\n' +
+      '            • wss://bsc.drpc.org\n' +
+      '            • wss://bsc.blockpi.network/v1/ws/public\n' +
+      '          如都连不上，说明你的出口被 ban，需要：\n' +
+      '            1) 换网络/代理（机场节点通常能连 publicnode）\n' +
+      '            2) 或购买付费服务（QuickNode / NodeReal / GetBlock）\n' +
+      '            3) 或用 VPS 部署一台中继服务器\n' +
+      '          自动重连已启用，会持续尝试恢复。'
     ))
   }
 
@@ -171,11 +207,28 @@ export class MempoolMonitor {
         // silently stop receiving txs when the filter expires or the node blips.
         onError: (err) => {
           this.errorCount++
-          const { unsupported, filterExpired, short } = classifyRpcError(err)
+          const { unsupported, filterExpired, socketClosed, short } = classifyRpcError(err)
 
           if (unsupported) {
             this.showRpcGuidance()
             return  // no point retrying on 403
+          }
+
+          if (socketClosed) {
+            // WSS died — usually GFW/firewall closing idle socket. Rebuild.
+            // Viem's auto-reconnect should have tried but clearly failed here.
+            this.reconnectAttempt++
+            if (this.reconnectAttempt === 3) this.showSocketGuidance()
+            this.activeUnwatch?.()
+            this.activeUnwatch = undefined
+            const delay = Math.min(1000 * 2 ** (this.reconnectAttempt - 1), 10_000)
+            const now = Date.now()
+            if (now - this.lastErrorLogAt > 15_000) {
+              this.lastErrorLogAt = now
+              console.warn(chalk.yellow(`[Mempool] WSS 连接断开，${delay}ms 后重连 (第 ${this.reconnectAttempt} 次)`))
+            }
+            this.reconnectTimer = setTimeout(() => this.attachWatcher(), delay)
+            return
           }
 
           if (filterExpired) {

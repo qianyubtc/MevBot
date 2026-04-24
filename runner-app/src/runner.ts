@@ -14,6 +14,21 @@ function emit(level: LogLine['level'], text: string) {
   logListeners.forEach(fn => fn({ level, text, ts: Date.now() }))
 }
 
+// Robust stringify — `String(errorObj)` yields "[object Object]".
+// Render Errors with message, plain objects via JSON, rest via String().
+function renderArg(a: any): string {
+  if (typeof a === 'string') return a
+  if (a instanceof Error) return a.message ?? a.toString()
+  if (a && typeof a === 'object') {
+    // viem errors have shortMessage/message
+    if (a.shortMessage || a.message) {
+      return String(a.shortMessage ?? a.message).split('\n')[0].slice(0, 240)
+    }
+    try { return JSON.stringify(a).slice(0, 240) } catch { return String(a) }
+  }
+  return String(a)
+}
+
 export async function startRunner() {
   // Patch console so we capture all runner output
   const _log = console.log.bind(console)
@@ -21,20 +36,29 @@ export async function startRunner() {
   const _err = console.error.bind(console)
 
   console.log = (...args: any[]) => {
-    const text = args.map(a => (typeof a === 'string' ? a : String(a))).join(' ')
+    const text = args.map(renderArg).join(' ')
     _log(text)
     emit('info', text)
   }
   console.warn = (...args: any[]) => {
-    const text = args.map(a => String(a)).join(' ')
+    const text = args.map(renderArg).join(' ')
     _warn(text)
     emit('warn', text)
   }
   console.error = (...args: any[]) => {
-    const text = args.map(a => String(a)).join(' ')
+    const text = args.map(renderArg).join(' ')
     _err(text)
     emit('error', text)
   }
+
+  // Without these, viem's async WSS errors print as "[object Object]" via the
+  // default node rejection handler (which bypasses our patched console).
+  process.on('unhandledRejection', (reason: any) => {
+    emit('error', `[Runner] 未处理的 Promise 异常: ${renderArg(reason)}`)
+  })
+  process.on('uncaughtException', (err: any) => {
+    emit('error', `[Runner] 未捕获异常: ${renderArg(err)}`)
+  })
 
   // Dynamically load the runner bundle
   // In production: bundled alongside app

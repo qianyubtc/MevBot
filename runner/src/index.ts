@@ -33,13 +33,31 @@ function emit(level: LogLine['level'], text: string) {
   logListeners.forEach(fn => fn(line))
 }
 
-// Patch chalk output to also emit to listeners
+// Patch chalk output to also emit to listeners. Render errors/objects readably
+// so Electron log viewer doesn't show "[object Object]".
+function renderArg(a: any): string {
+  if (typeof a === 'string') return a
+  if (a instanceof Error) return a.message ?? a.toString()
+  if (a && typeof a === 'object') {
+    if (a.shortMessage || a.message) {
+      return String(a.shortMessage ?? a.message).split('\n')[0].slice(0, 240)
+    }
+    try { return JSON.stringify(a).slice(0, 240) } catch { return String(a) }
+  }
+  return String(a)
+}
 const _log = console.log.bind(console)
 const _warn = console.warn.bind(console)
 const _err = console.error.bind(console)
-console.log = (...args) => { _log(...args); emit('info', args.join(' ')) }
-console.warn = (...args) => { _warn(...args); emit('warn', args.join(' ')) }
-console.error = (...args) => { _err(...args); emit('error', args.join(' ')) }
+console.log = (...args) => { _log(...args); emit('info', args.map(renderArg).join(' ')) }
+console.warn = (...args) => { _warn(...args); emit('warn', args.map(renderArg).join(' ')) }
+console.error = (...args) => { _err(...args); emit('error', args.map(renderArg).join(' ')) }
+
+// Surface async rejections instead of letting node's default handler dump
+// "[object Object]" to stderr.
+process.on('unhandledRejection', (reason: any) => {
+  console.warn(chalk.yellow(`[Runner] 未处理的 Promise 异常:`), reason?.shortMessage ?? reason?.message ?? String(reason))
+})
 
 function buildScanClient() {
   cfg = loadConfig()

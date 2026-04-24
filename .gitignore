@@ -9,6 +9,8 @@ runner/dist/
 runner/dist-cjs/
 runner/dist-bin/
 runner/mevbot-runner-*
+runner-app/dist/
+runner-app/node_modules/
 
 # Env files (never commit private keys!)
 runner/.env

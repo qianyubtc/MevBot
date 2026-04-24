@@ -28,7 +28,15 @@ export function buildClients(rpcUrl: string, privateKey: string, chainName: stri
   const chain = CHAINS[chainName] ?? bsc
   const isWss = /^wss?:\/\//i.test(rpcUrl)
   const transport: Transport = isWss
-    ? webSocket(rpcUrl, { timeout: timeoutMs, reconnect: { attempts: 5, delay: 1000 } })
+    ? webSocket(rpcUrl, {
+        timeout: timeoutMs,
+        // keepAlive pings stop middleboxes (NAT/GFW/load-balancers) from
+        // silently dropping the TCP connection after ~30-60s idle.
+        keepAlive: { interval: 20_000 },
+        // More attempts + gradual backoff — public WSS endpoints hiccup a lot,
+        // especially across GFW. 20 tries × 1.5s spacing buys ~30s of retry.
+        reconnect: { attempts: 20, delay: 1500 },
+      })
     : http(rpcUrl, { timeout: timeoutMs })
 
   const publicClient = createPublicClient({ chain, transport, batch: { multicall: true } })
