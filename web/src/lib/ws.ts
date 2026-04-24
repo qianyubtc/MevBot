@@ -63,6 +63,14 @@ export interface Token {
   pairAddress: string
   price?: number
   priceUSD?: number
+  // Safety fields (from checkSafety)
+  safetyScore?: number
+  isHoneypot?: boolean
+  buyTax?: number
+  sellTax?: number
+  ownerRenounced?: boolean
+  lpLocked?: boolean
+  flags?: string[]
 }
 
 type Handler = (msg: WsMessage) => void
