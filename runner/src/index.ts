@@ -7,6 +7,7 @@ import { privateKeyToAccount } from 'viem/accounts'
 import { SandwichStrategy } from './strategies/sandwich.js'
 import { ArbitrageStrategy } from './strategies/arbitrage.js'
 import { SniperStrategy } from './strategies/sniper.js'
+import { BackrunStrategy } from './strategies/backrun.js'
 import { OnChainScanner } from './core/scanner.js'
 import { getPnLSummary, saveSnapshot, resetData } from './core/db.js'
 import { loadConfig, saveConfig } from './core/config.js'
@@ -22,7 +23,7 @@ if (!cfg.privateKey) {
 }
 
 const ws = new WsServer(8765)
-const strategies: Record<string, SandwichStrategy | ArbitrageStrategy | SniperStrategy> = {}
+const strategies: Record<string, SandwichStrategy | ArbitrageStrategy | SniperStrategy | BackrunStrategy> = {}
 
 // Log forwarder — used by Electron to capture logs
 export type LogLine = { level: 'info' | 'warn' | 'error'; text: string; ts: number }
@@ -156,6 +157,10 @@ ws.on(async (msg, client) => {
 
     if (strategy === 'sandwich') {
       const s = new SandwichStrategy(publicClient, walletClient, ws, { ...config, token }, routers)
+      strategies[strategy] = s
+      await s.start()
+    } else if (strategy === 'backrun') {
+      const s = new BackrunStrategy(publicClient, walletClient, ws, { ...config, token })
       strategies[strategy] = s
       await s.start()
     } else if (strategy === 'arbitrage') {

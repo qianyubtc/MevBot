@@ -35,6 +35,14 @@ export interface StrategyConfig {
     minSpreadPct: number
     enabled: boolean
   }
+  backrun: {
+    minProfitUSD: number
+    maxGasGwei: number
+    executionAmountUSD: number
+    slippageTolerance: number
+    minSpreadPct: number
+    enabled: boolean
+  }
   lp: {
     minProfitUSD: number
     maxGasGwei: number
@@ -68,6 +76,8 @@ interface AppState {
   walletBalance: number | null
   sandwichSelectedToken: Token | null   // user's current highlight/preview selection
   sandwichRunningToken: Token | null    // snapshot of what was actually started — never changes while running
+  backrunSelectedToken: Token | null
+  backrunRunningToken: Token | null
   setRunnerConnected: (v: boolean) => void
   setStrategyRunning: (strategy: string, running: boolean) => void
   setPnL: (pnl: PnLSnapshot) => void
@@ -83,6 +93,8 @@ interface AppState {
   ) => void
   setSandwichSelectedToken: (token: Token | null) => void
   setSandwichRunningToken: (token: Token | null) => void
+  setBackrunSelectedToken: (token: Token | null) => void
+  setBackrunRunningToken: (token: Token | null) => void
 }
 
 const defaultConfig: Config = {
@@ -113,6 +125,14 @@ const defaultStrategyConfig: StrategyConfig = {
   arbitrage: {
     minProfitUSD: 3,
     maxGasGwei: 8,
+    minSpreadPct: 0.3,
+    enabled: false,
+  },
+  backrun: {
+    minProfitUSD: 0.5,
+    maxGasGwei: 5,
+    executionAmountUSD: 50,
+    slippageTolerance: 1,
     minSpreadPct: 0.3,
     enabled: false,
   },
@@ -149,6 +169,8 @@ export const useStore = create<AppState>()(
       walletBalance: null,
       sandwichSelectedToken: null,
       sandwichRunningToken: null,
+      backrunSelectedToken: null,
+      backrunRunningToken: null,
       config: defaultConfig,
       strategyConfig: defaultStrategyConfig,
 
@@ -165,6 +187,8 @@ export const useStore = create<AppState>()(
       setWalletBalance: (v) => set({ walletBalance: v }),
       setSandwichSelectedToken: (token) => set({ sandwichSelectedToken: token }),
       setSandwichRunningToken: (token) => set({ sandwichRunningToken: token }),
+      setBackrunSelectedToken: (token) => set({ backrunSelectedToken: token }),
+      setBackrunRunningToken: (token) => set({ backrunRunningToken: token }),
       resetLocalData: () => set({ trades: [], opportunities: [], pnl: null }),
       updateConfig: (patch) =>
         set((s) => ({ config: { ...s.config, ...patch } })),
@@ -183,6 +207,8 @@ export const useStore = create<AppState>()(
         strategyConfig: s.strategyConfig,
         sandwichSelectedToken: s.sandwichSelectedToken,
         sandwichRunningToken: s.sandwichRunningToken,
+        backrunSelectedToken: s.backrunSelectedToken,
+        backrunRunningToken: s.backrunRunningToken,
       }),
     }
   )

@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Sword, ArrowLeftRight, Droplets,
-  Crosshair, Zap, Settings, Activity, Download,
+  Crosshair, Zap, Repeat, Settings, Activity, Download,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store'
@@ -9,6 +9,7 @@ import { useStore } from '@/store'
 const NAV = [
   { to: '/', icon: LayoutDashboard, label: '概览' },
   { to: '/sandwich', icon: Sword, label: '夹子' },
+  { to: '/backrun', icon: Repeat, label: '区块套利' },
   { to: '/arbitrage', icon: ArrowLeftRight, label: '套利' },
   { to: '/lp', icon: Droplets, label: 'LP 套利' },
   { to: '/sniper', icon: Crosshair, label: '狙击' },
