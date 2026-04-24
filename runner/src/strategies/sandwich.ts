@@ -108,6 +108,12 @@ export class SandwichStrategy {
     console.log(chalk.green(`[Sandwich] 策略启动 → 目标: ${this.config.token.symbol}`))
 
     try {
+      // Pre-flight: verify RPC supports pending-tx subscriptions BEFORE we
+      // spend gas deploying the proxy. Public BSC RPCs (dataseed / ninicoin /
+      // defibit) all return 403 on eth_newPendingTransactionFilter — running
+      // without mempool access just silently burns gas on proxy deploy.
+      await this.preflightMempool()
+
       // Prime BNB price before any profit math, then refresh every 2 min so
       // gas/profit calcs track real market price instead of the $580 fallback.
       await this.refreshBnbPrice()
@@ -144,6 +150,35 @@ export class SandwichStrategy {
     if (this.bnbPriceTimer) { clearInterval(this.bnbPriceTimer); this.bnbPriceTimer = undefined }
     this.ws.broadcast({ type: 'status', payload: { strategy: 'sandwich', running: false, scanned: 0, pending: 0 } })
     console.log(chalk.yellow('[Sandwich] 策略已停止'))
+  }
+
+  // Probe whether the RPC actually supports mempool subscriptions. Cheapest
+  // test: create a pending-tx filter and immediately drop it. Fails fast with
+  // 403 on public BSC RPCs. We only warn (don't throw) so users on a flaky
+  // RPC can still let the strategy start and see what happens — mempool.ts
+  // will show the one-shot guidance if it really doesn't work.
+  private async preflightMempool() {
+    try {
+      const transport = this.publicClient.transport as any
+      const filterId = await transport.request({ method: 'eth_newPendingTransactionFilter' })
+      // Best-effort cleanup; errors ignored
+      await transport.request({ method: 'eth_uninstallFilter', params: [filterId] }).catch(() => {})
+    } catch (err: any) {
+      const msg = String(err?.message ?? err ?? '').toLowerCase()
+      const status = err?.status ?? err?.cause?.status
+      if (status === 403 || status === 405 || msg.includes('forbidden') ||
+          msg.includes('method not') || msg.includes('not supported')) {
+        throw new Error(
+          '当前 RPC 不支持 mempool 订阅。请在「设置」页切换到支持 pending-tx 的 RPC：\n' +
+          '  • wss://bsc-rpc.publicnode.com\n' +
+          '  • wss://bsc.callstaticrpc.com\n' +
+          '  • https://rpc-bsc.48.club (MEV 专用)\n' +
+          '  • 或付费: QuickNode / NodeReal / GetBlock'
+        )
+      }
+      // Unknown error — don't block; let mempool.ts handle it downstream.
+      console.warn(chalk.yellow(`[Sandwich] mempool 预检异常 (继续启动): ${msg.slice(0, 100)}`))
+    }
   }
 
   // Check whether our proxy is still holding tokens from a prior failed run.

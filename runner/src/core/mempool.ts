@@ -25,11 +25,32 @@ const SIG_ETH_FOR_EXACT     = '0xfb3bdb41'
 
 const SWAP_SIGNATURES = [SIG_ETH_FOR_TOKENS, SIG_TOKENS_FOR_ETH, SIG_TOKENS_FOR_TOKENS, SIG_ETH_FOR_EXACT]
 
+// Classify RPC errors so we can give users actionable guidance instead of
+// dumping raw viem stack traces.
+function classifyRpcError(err: any): { unsupported: boolean; short: string } {
+  const raw = String(err?.message ?? err ?? '').toLowerCase()
+  const status = err?.status ?? err?.cause?.status
+  const unsupported =
+    status === 403 || status === 405 ||
+    raw.includes('forbidden') ||
+    raw.includes('method not found') ||
+    raw.includes('method not supported') ||
+    raw.includes('does not exist') ||
+    raw.includes('filter not found') ||
+    raw.includes('not available')
+  // Keep only the first line, strip URL/body noise
+  const short = String(err?.shortMessage ?? err?.message ?? err ?? '').split('\n')[0].slice(0, 180)
+  return { unsupported, short }
+}
+
 export class MempoolMonitor {
   private client: PublicClient
   private routerAddresses: string[]
   private handlers: ((swap: PendingSwap) => void)[] = []
   private running = false
+  private errorCount = 0
+  private lastErrorLogAt = 0
+  private guidanceShown = false
 
   constructor(client: PublicClient, routerAddresses: string[]) {
     this.client = client
@@ -40,8 +61,25 @@ export class MempoolMonitor {
     this.handlers.push(handler)
   }
 
+  // Print actionable RPC guidance exactly once per session.
+  private showRpcGuidance() {
+    if (this.guidanceShown) return
+    this.guidanceShown = true
+    console.error(chalk.red(
+      '[Mempool] ✗ 当前 RPC 不支持 mempool 订阅 (eth_newPendingTransactionFilter 返回 403)。\n' +
+      '          夹子策略需要访问待处理交易池，公共 BSC RPC（dataseed / ninicoin 等）都不支持。\n' +
+      '          请在「设置」页把 RPC 换成以下任一：\n' +
+      '            • WSS 节点: wss://bsc-rpc.publicnode.com  或  wss://bsc.callstaticrpc.com\n' +
+      '            • 付费服务: QuickNode / NodeReal / GetBlock （支持 pending tx 订阅）\n' +
+      '            • 48 Club MEV: https://rpc-bsc.48.club  （专门给 MEV 机器人用）\n' +
+      '          换 RPC 后重启夹子即可。'
+    ))
+  }
+
   async start() {
     this.running = true
+    this.errorCount = 0
+    this.guidanceShown = false
     console.log(chalk.cyan('[Mempool] 开始监听待处理交易...'))
 
     try {
@@ -65,12 +103,28 @@ export class MempoolMonitor {
             } catch {}
           }))
         },
-        // viem's subscription swallows async errors — without this callback a
-        // dropped node connection would silently stop delivering txs forever
-        // (and we'd never notice because the try/catch only wraps the sync
-        // setup, not the stream). Logging lets the user spot dead mempool.
+        // viem's subscription swallows async errors — without this callback
+        // a dropped/unsupported node silently stops delivering forever.
+        // We detect "unsupported" on the first error and print one-shot
+        // guidance; transient errors get throttled to ≤1 log per 30s so
+        // the log panel doesn't get flooded.
         onError: (err) => {
-          console.error(chalk.red(`[Mempool] 订阅错误: ${err?.message ?? err}`))
+          this.errorCount++
+          const { unsupported, short } = classifyRpcError(err)
+
+          if (unsupported) {
+            this.showRpcGuidance()
+            return
+          }
+
+          const now = Date.now()
+          if (now - this.lastErrorLogAt > 30_000) {
+            this.lastErrorLogAt = now
+            console.error(chalk.red(
+              `[Mempool] 订阅错误 (#${this.errorCount}): ${short}` +
+              (this.errorCount > 5 ? ' — 错误持续，建议检查 RPC 可用性' : '')
+            ))
+          }
         },
       })
 
@@ -79,7 +133,9 @@ export class MempoolMonitor {
         unwatch()
       }
     } catch (e: any) {
-      console.error(chalk.red(`[Mempool] 订阅失败 (${e?.message ?? e})，使用轮询模式`))
+      const { unsupported, short } = classifyRpcError(e)
+      if (unsupported) this.showRpcGuidance()
+      else console.error(chalk.red(`[Mempool] 订阅启动失败: ${short}`))
       return this.startPolling()
     }
   }
