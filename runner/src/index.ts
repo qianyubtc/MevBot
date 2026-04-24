@@ -122,6 +122,13 @@ ws.on(async (msg, client) => {
       console.warn(chalk.yellow('[Runner] 余额查询失败，跳过检查:'), e.message)
     }
 
+    // Stop any existing instance of this strategy first (covers token-switch case)
+    if (strategies[strategy]) {
+      strategies[strategy].stop()
+      delete strategies[strategy]
+      console.log(chalk.yellow(`[Runner] 已停止旧 ${strategy} 策略`))
+    }
+
     console.log(chalk.cyan(`[Runner] 启动策略: ${strategy}`))
     const { publicClient, walletClient } = buildClients(cfg.rpcUrl, cfg.privateKey, cfg.chain)
     const routers = Object.values(DEX_ROUTERS[cfg.chain] ?? {})
