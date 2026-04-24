@@ -54,6 +54,11 @@ export function saveSnapshot(value: number) {
   writeJSON(SNAPSHOTS_FILE, snaps.slice(-288))
 }
 
+export function resetData() {
+  writeJSON(TRADES_FILE, [])
+  writeJSON(SNAPSHOTS_FILE, [])
+}
+
 export function getPnLSummary() {
   const trades = readJSON<TradeRecord[]>(TRADES_FILE, [])
   const snaps = readJSON<Snapshot[]>(SNAPSHOTS_FILE, [])

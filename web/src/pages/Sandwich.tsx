@@ -45,11 +45,17 @@ export default function Sandwich() {
         setCaInput('')
       }
 
-      if (msg.type === 'error' && caLoadingRef.current) {
-        caLoadingRef.current = false
-        setCaLoading(false)
-        if (caTimeoutRef.current) clearTimeout(caTimeoutRef.current)
-        setCaError(msg.payload.message)
+      if (msg.type === 'error') {
+        if (caLoadingRef.current) {
+          // Error during CA lookup
+          caLoadingRef.current = false
+          setCaLoading(false)
+          if (caTimeoutRef.current) clearTimeout(caTimeoutRef.current)
+          setCaError(msg.payload.message)
+        } else {
+          // General error (e.g. balance insufficient when starting)
+          setStartError(msg.payload.message)
+        }
       }
     })
     return off

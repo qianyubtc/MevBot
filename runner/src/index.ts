@@ -2,11 +2,13 @@ import 'dotenv/config'
 import chalk from 'chalk'
 import { WsServer } from './core/ws-server.js'
 import { buildClients, DEX_ROUTERS, DEX_FACTORIES } from './config/chains.js'
+import { formatUnits } from 'viem'
+import { privateKeyToAccount } from 'viem/accounts'
 import { SandwichStrategy } from './strategies/sandwich.js'
 import { ArbitrageStrategy } from './strategies/arbitrage.js'
 import { SniperStrategy } from './strategies/sniper.js'
 import { OnChainScanner } from './core/scanner.js'
-import { getPnLSummary, saveSnapshot } from './core/db.js'
+import { getPnLSummary, saveSnapshot, resetData } from './core/db.js'
 import { loadConfig, saveConfig } from './core/config.js'
 
 console.log(chalk.cyan('╔════════════════════════════════╗'))
@@ -65,6 +67,32 @@ ws.on(async (msg, client) => {
     return
   }
 
+  if (type === 'reset_data') {
+    resetData()
+    console.log(chalk.yellow('[Runner] 数据已重置'))
+    ws.send(client, { type: 'reset_ok', payload: { ok: true } })
+    ws.broadcast({ type: 'pnl', payload: getPnLSummary() })
+    return
+  }
+
+  if (type === 'get_balance') {
+    cfg = loadConfig()
+    if (!cfg.privateKey) {
+      ws.send(client, { type: 'wallet_balance', payload: { bnb: null, error: '未配置私钥' } })
+      return
+    }
+    try {
+      const { publicClient } = buildScanClient()
+      const account = privateKeyToAccount(cfg.privateKey as `0x${string}`)
+      const raw = await publicClient.getBalance({ address: account.address })
+      const bnb = parseFloat(formatUnits(raw, 18))
+      ws.send(client, { type: 'wallet_balance', payload: { bnb, address: account.address } })
+    } catch (e: any) {
+      ws.send(client, { type: 'wallet_balance', payload: { bnb: null, error: e.message } })
+    }
+    return
+  }
+
   // ── Strategy control ─────────────────────────────────────
   if (type === 'start') {
     cfg = loadConfig()
@@ -73,6 +101,25 @@ ws.on(async (msg, client) => {
     if (!cfg.privateKey) {
       ws.send(client, { type: 'error', payload: { message: '请先在设置页配置钱包私钥' } })
       return
+    }
+
+    // ── Balance check ─────────────────────────────────────
+    try {
+      const { publicClient: scanClient } = buildScanClient()
+      const account = privateKeyToAccount(cfg.privateKey as `0x${string}`)
+      const raw = await scanClient.getBalance({ address: account.address })
+      const bnb = parseFloat(formatUnits(raw, 18))
+      const MIN_BNB = 0.05
+      if (bnb < MIN_BNB) {
+        ws.send(client, {
+          type: 'error',
+          payload: { message: `BNB 余额不足：当前 ${bnb.toFixed(4)} BNB，夹子策略至少需要 ${MIN_BNB} BNB（Gas + 本金）` },
+        })
+        return
+      }
+      console.log(chalk.dim(`[Runner] 钱包余额: ${bnb.toFixed(4)} BNB`))
+    } catch (e: any) {
+      console.warn(chalk.yellow('[Runner] 余额查询失败，跳过检查:'), e.message)
     }
 
     console.log(chalk.cyan(`[Runner] 启动策略: ${strategy}`))

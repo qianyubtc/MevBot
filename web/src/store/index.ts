@@ -64,13 +64,16 @@ interface AppState {
   tokens: Record<string, Token[]>
   config: Config
   strategyConfig: StrategyConfig
+  lastTokensAt: number
+  walletBalance: number | null
   setRunnerConnected: (v: boolean) => void
   setStrategyRunning: (strategy: string, running: boolean) => void
   setPnL: (pnl: PnLSnapshot) => void
   addTrade: (trade: Trade) => void
   addOpportunity: (opp: Opportunity) => void
   setTokens: (strategy: string, tokens: Token[]) => void
-  lastTokensAt: number
+  setWalletBalance: (v: number | null) => void
+  resetLocalData: () => void
   updateConfig: (patch: Partial<Config>) => void
   updateStrategyConfig: <K extends keyof StrategyConfig>(
     strategy: K,
@@ -139,6 +142,7 @@ export const useStore = create<AppState>()(
       opportunities: [],
       tokens: {},
       lastTokensAt: 0,
+      walletBalance: null,
       config: defaultConfig,
       strategyConfig: defaultStrategyConfig,
 
@@ -152,6 +156,8 @@ export const useStore = create<AppState>()(
         set((s) => ({ opportunities: [opp, ...s.opportunities].slice(0, 100) })),
       setTokens: (strategy, tokens) =>
         set((s) => ({ tokens: { ...s.tokens, [strategy]: tokens }, lastTokensAt: Date.now() })),
+      setWalletBalance: (v) => set({ walletBalance: v }),
+      resetLocalData: () => set({ trades: [], opportunities: [], pnl: null }),
       updateConfig: (patch) =>
         set((s) => ({ config: { ...s.config, ...patch } })),
       updateStrategyConfig: (strategy, patch) =>

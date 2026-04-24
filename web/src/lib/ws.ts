@@ -5,6 +5,8 @@ export type WsMessage =
   | { type: 'pnl'; payload: PnLSnapshot }
   | { type: 'tokens'; strategy: string; payload: Token[] }
   | { type: 'token_analyzed'; payload: Token }
+  | { type: 'wallet_balance'; payload: { bnb: number | null; address?: string; error?: string } }
+  | { type: 'reset_ok'; payload: { ok: boolean } }
   | { type: 'connected'; payload: { version: string } }
   | { type: 'error'; payload: { message: string } }
 
