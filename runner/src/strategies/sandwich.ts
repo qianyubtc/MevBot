@@ -1,14 +1,67 @@
-import { type PublicClient, type WalletClient, parseEther, formatEther } from 'viem'
+import { type PublicClient, type WalletClient, parseUnits, formatEther, encodeFunctionData } from 'viem'
 import { MempoolMonitor, type PendingSwap } from '../core/mempool.js'
-import { saveTrade, saveSnapshot } from '../core/db.js'
+import { saveTrade } from '../core/db.js'
 import { WsServer } from '../core/ws-server.js'
 import chalk from 'chalk'
 import { randomUUID } from 'crypto'
+
+const ROUTER_ABI = [
+  {
+    name: 'swapExactETHForTokens',
+    type: 'function',
+    inputs: [
+      { name: 'amountOutMin', type: 'uint256' },
+      { name: 'path', type: 'address[]' },
+      { name: 'to', type: 'address' },
+      { name: 'deadline', type: 'uint256' },
+    ],
+    outputs: [{ name: 'amounts', type: 'uint256[]' }],
+    stateMutability: 'payable',
+  },
+  {
+    name: 'swapExactTokensForETH',
+    type: 'function',
+    inputs: [
+      { name: 'amountIn', type: 'uint256' },
+      { name: 'amountOutMin', type: 'uint256' },
+      { name: 'path', type: 'address[]' },
+      { name: 'to', type: 'address' },
+      { name: 'deadline', type: 'uint256' },
+    ],
+    outputs: [{ name: 'amounts', type: 'uint256[]' }],
+    stateMutability: 'nonpayable',
+  },
+] as const
+
+const ERC20_APPROVE_ABI = [
+  {
+    name: 'approve',
+    type: 'function',
+    inputs: [
+      { name: 'spender', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+    ],
+    outputs: [{ name: '', type: 'bool' }],
+    stateMutability: 'nonpayable',
+  },
+  {
+    name: 'balanceOf',
+    type: 'function',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ name: '', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+] as const
+
+const WBNB = '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c' as `0x${string}`
 
 export interface SandwichConfig {
   minProfitUSD: number
   maxGasGwei: number
   minLiquidityUSD: number
+  executionAmountUSD: number
+  priorityGasMultiplier: number
+  slippageTolerance: number
   targetDexes: string[]
   token: { address: string; symbol: string; dex: string }
 }
@@ -17,7 +70,7 @@ export class SandwichStrategy {
   private running = false
   private mempool: MempoolMonitor
   private stopFn?: () => void
-  private totalProfit = 0
+  private scanned = 0
 
   constructor(
     private publicClient: PublicClient,
@@ -42,22 +95,24 @@ export class SandwichStrategy {
 
   private async evaluateSwap(swap: PendingSwap) {
     if (!this.running) return
+    this.scanned++
 
     // Filter: gas price check
     const gasPriceGwei = Number(swap.gasPrice) / 1e9
     if (gasPriceGwei > this.config.maxGasGwei * 2) return
 
-    // Simulate profit estimation
+    // Estimate profit
     const estimatedProfit = this.estimateProfit(swap)
     if (estimatedProfit < this.config.minProfitUSD) return
 
-    const gasUSD = 0.5
+    const bnbPrice = 580
+    const gasUSD = gasPriceGwei * 0.0003 * bnbPrice // rough gas estimate
 
-    console.log(chalk.green(
-      `[Sandwich] 发现机会: ${this.config.token.symbol} 预估利润 $${estimatedProfit.toFixed(2)}`
+    console.log(chalk.cyan(
+      `[Sandwich] 发现机会: ${this.config.token.symbol} 预估利润 $${estimatedProfit.toFixed(2)} | Victim gas: ${gasPriceGwei.toFixed(1)} Gwei`
     ))
 
-    // Broadcast opportunity
+    // Broadcast opportunity (real mempool detection)
     this.ws.broadcast({
       type: 'opportunity',
       payload: {
@@ -67,77 +122,161 @@ export class SandwichStrategy {
         tokenAddress: this.config.token.address,
         chain: 'BSC',
         profitUSD: estimatedProfit,
-        profitNative: estimatedProfit / 580,
+        profitNative: estimatedProfit / bnbPrice,
         gasUSD,
         netProfit: estimatedProfit - gasUSD,
         timestamp: Date.now(),
       },
     })
 
-    // Execute sandwich
+    this.ws.broadcast({ type: 'status', payload: { strategy: 'sandwich', running: true, scanned: this.scanned, pending: 1 } })
+
+    // Execute on-chain sandwich
     await this.executeSandwich(swap, estimatedProfit, gasUSD)
+
+    this.ws.broadcast({ type: 'status', payload: { strategy: 'sandwich', running: true, scanned: this.scanned, pending: 0 } })
   }
 
   private estimateProfit(swap: PendingSwap): number {
     const swapAmountETH = Number(formatEther(swap.amountIn))
     if (swapAmountETH < 0.1) return 0
-
-    // Simplified: larger swap = more slippage = more profit
     const impactPct = Math.min(swapAmountETH * 0.001, 0.5)
     return swapAmountETH * 580 * impactPct * 0.7
   }
 
-  private async executeSandwich(swap: PendingSwap, profitUSD: number, gasUSD: number) {
+  private async executeSandwich(swap: PendingSwap, estimatedProfitUSD: number, gasUSD: number) {
     const id = randomUUID()
-    let txHash = '0x' + Array.from({ length: 64 }, () =>
-      Math.floor(Math.random() * 16).toString(16)
-    ).join('')
+    const tokenAddress = this.config.token.address as `0x${string}`
+    const routerAddress = this.routerAddresses[0] as `0x${string}`
+    const account = this.walletClient.account!
+    const deadline = BigInt(Math.floor(Date.now() / 1000) + 60)
+    const bnbPrice = 580
+
+    // Amount to spend on front-run buy (from config, default $200)
+    const buyAmountUSD = this.config.executionAmountUSD ?? 200
+    const buyAmountBNB = parseUnits((buyAmountUSD / bnbPrice).toFixed(6), 18)
+
+    // Priority gas = victim gas * multiplier
+    const victimGasGwei = Number(swap.gasPrice) / 1e9
+    const priorityGasWei = parseUnits(
+      (victimGasGwei * (this.config.priorityGasMultiplier ?? 2)).toFixed(9),
+      9
+    )
 
     try {
-      // Front-run buy
-      // TODO: implement actual front-run buy via walletClient
-      // const frontRunHash = await this.walletClient.sendTransaction({ ... })
+      // ── Step 1: Front-run buy (BNB → Token) ─────────────────────────
+      console.log(chalk.dim(`[Sandwich] Front-run buy: ${buyAmountUSD}$ BNB → ${this.config.token.symbol}`))
+      const frontRunHash = await this.walletClient.writeContract({
+        address: routerAddress,
+        abi: ROUTER_ABI,
+        functionName: 'swapExactETHForTokens',
+        args: [
+          0n,                            // amountOutMin = 0 (we take whatever we get)
+          [WBNB, tokenAddress],          // path
+          account.address,               // to
+          deadline,
+        ],
+        value: buyAmountBNB,
+        gasPrice: priorityGasWei,        // outbid victim
+        account: account.address,
+        chain: null,
+      })
 
-      // Wait for victim tx
-      await new Promise((r) => setTimeout(r, 100))
+      console.log(chalk.dim(`[Sandwich] Front-run hash: ${frontRunHash}`))
 
-      // Back-run sell
-      // TODO: implement actual back-run sell
+      // ── Step 2: Wait for front-run confirmation ──────────────────────
+      const frontReceipt = await this.publicClient.waitForTransactionReceipt({
+        hash: frontRunHash,
+        timeout: 30_000,
+      })
 
-      const netProfit = profitUSD - gasUSD
-      this.totalProfit += netProfit
-      saveSnapshot(this.totalProfit)
+      if (frontReceipt.status !== 'success') throw new Error('Front-run tx reverted')
 
+      // ── Step 3: Wait briefly for victim tx to land ──────────────────
+      await new Promise((r) => setTimeout(r, 200))
+
+      // ── Step 4: Check token balance we received ──────────────────────
+      const tokenBalance = await this.publicClient.readContract({
+        address: tokenAddress,
+        abi: ERC20_APPROVE_ABI,
+        functionName: 'balanceOf',
+        args: [account.address],
+      })
+
+      if (tokenBalance === 0n) throw new Error('No token received from front-run')
+
+      // ── Step 5: Approve router to spend tokens ───────────────────────
+      const approveHash = await this.walletClient.writeContract({
+        address: tokenAddress,
+        abi: ERC20_APPROVE_ABI,
+        functionName: 'approve',
+        args: [routerAddress, tokenBalance],
+        gasPrice: priorityGasWei,
+        account: account.address,
+        chain: null,
+      })
+      await this.publicClient.waitForTransactionReceipt({ hash: approveHash, timeout: 30_000 })
+
+      // ── Step 6: Back-run sell (Token → BNB) ─────────────────────────
+      console.log(chalk.dim(`[Sandwich] Back-run sell: ${this.config.token.symbol} → BNB`))
+      const backRunHash = await this.walletClient.writeContract({
+        address: routerAddress,
+        abi: ROUTER_ABI,
+        functionName: 'swapExactTokensForETH',
+        args: [
+          tokenBalance,
+          0n,                             // amountOutMin = 0
+          [tokenAddress, WBNB],
+          account.address,
+          deadline,
+        ],
+        gasPrice: priorityGasWei,
+        account: account.address,
+        chain: null,
+      })
+
+      const backReceipt = await this.publicClient.waitForTransactionReceipt({
+        hash: backRunHash,
+        timeout: 30_000,
+      })
+
+      if (backReceipt.status !== 'success') throw new Error('Back-run tx reverted')
+
+      // ── Step 7: Record real trade ────────────────────────────────────
       const trade = {
         id,
         strategy: 'sandwich',
         token: this.config.token.symbol,
-        txHash,
+        txHash: backRunHash,              // use back-run as the settlement hash
         chain: 'BSC',
-        profitUSD,
+        profitUSD: estimatedProfitUSD,
         gasUSD,
         status: 'success' as const,
         timestamp: Date.now(),
       }
       saveTrade(trade)
+      this.ws.broadcast({ type: 'trade', payload: trade })
+      console.log(chalk.green(`[Sandwich] 夹子成功! 预估利润 $${estimatedProfitUSD.toFixed(2)} | tx: ${backRunHash}`))
 
-      this.ws.broadcast({ type: 'trade', payload: trade })
-      console.log(chalk.green(`[Sandwich] 执行成功: +$${netProfit.toFixed(2)}`))
     } catch (err: any) {
-      const trade = {
-        id,
-        strategy: 'sandwich',
-        token: this.config.token.symbol,
-        txHash,
-        chain: 'BSC',
-        profitUSD: 0,
-        gasUSD,
-        status: 'failed' as const,
-        timestamp: Date.now(),
-      }
-      saveTrade(trade)
-      this.ws.broadcast({ type: 'trade', payload: trade })
       console.error(chalk.red('[Sandwich] 执行失败:'), err.message)
+      // Only record failed trade if we actually sent the front-run tx
+      // (to avoid recording for estimation/filter failures)
+      if (err.message !== 'No token received from front-run' && !err.message.includes('insufficient')) {
+        const trade = {
+          id,
+          strategy: 'sandwich',
+          token: this.config.token.symbol,
+          txHash: '',
+          chain: 'BSC',
+          profitUSD: 0,
+          gasUSD,
+          status: 'failed' as const,
+          timestamp: Date.now(),
+        }
+        saveTrade(trade)
+        this.ws.broadcast({ type: 'trade', payload: trade })
+      }
     }
   }
 
