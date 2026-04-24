@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useStore, type Chain } from '@/store'
 import { wsClient } from '@/lib/ws'
 import {
@@ -124,6 +124,19 @@ export default function Settings() {
   const [generating, setGenerating] = useState(false)
   const [newWallet, setNewWallet] = useState<{ privateKey: string; address: string } | null>(null)
   const [rpcOpen, setRpcOpen] = useState(false)
+  const rpcRef = useRef<HTMLDivElement>(null)
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    if (!rpcOpen) return
+    const handler = (e: MouseEvent) => {
+      if (rpcRef.current && !rpcRef.current.contains(e.target as Node)) {
+        setRpcOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [rpcOpen])
 
   const inputCls = 'w-full bg-bg-elevated border border-bg-border rounded-lg px-3 py-2 text-sm text-white font-mono placeholder:text-muted focus:outline-none focus:border-primary/50 transition-colors'
 
@@ -231,7 +244,7 @@ export default function Settings() {
         >
           <div className="space-y-2">
             {/* Preset picker */}
-            <div className="relative">
+            <div className="relative" ref={rpcRef}>
               <button
                 onClick={() => setRpcOpen(!rpcOpen)}
                 className="w-full flex items-center justify-between px-3 py-2 bg-bg-elevated border border-bg-border rounded-lg text-xs text-text-muted hover:border-primary/40 transition-colors"
@@ -242,7 +255,7 @@ export default function Settings() {
                 <ChevronDown className={cn('w-3.5 h-3.5 transition-transform', rpcOpen && 'rotate-180')} />
               </button>
               {rpcOpen && (
-                <div className="absolute z-20 top-full mt-1 w-full bg-bg-surface border border-bg-border rounded-xl shadow-xl overflow-hidden">
+                <div className="absolute z-20 top-full mt-1 w-full bg-bg-surface border border-bg-border rounded-xl shadow-xl max-h-64 overflow-y-auto">
                   {chainCfg.presets.map((p) => (
                     <button
                       key={p.label}
