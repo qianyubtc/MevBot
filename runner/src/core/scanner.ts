@@ -296,7 +296,12 @@ export class OnChainScanner {
 
     // ── 1. Honeypot & tax check via simulation ──────────────────────────
     try {
-      const testBNB = BigInt(1e16) // 0.01 BNB test amount
+      // Use a tiny test amount so price-impact ≈ 0. Old code used 0.01 BNB
+      // which on a $5k pool was ~0.2% of reserves → flagged 1%+ phantom
+      // "tax" on clean tokens. At 0.001 BNB price impact stays under 0.01%
+      // for every pool we scan (min liquidity $5k is enforced above).
+      void tokenReserve
+      const testBNB = BigInt(1e15) // 0.001 BNB
 
       // Simulate buy: how many tokens do we expect?
       const buyAmounts = await this.client.readContract({
@@ -309,10 +314,6 @@ export class OnChainScanner {
         flags.push('买入模拟失败')
         isHoneypot = true
       } else {
-        // Calculate buy tax: compare received vs theoretical
-        // Theoretical = (tokenReserve × testBNB) / bnbReserve  (simplified)
-        // We use router output as actual; router itself applies AMM math,
-        // any extra shortfall = buy tax
         // Simulate sell: can we sell those tokens back?
         try {
           const sellAmounts = await this.client.readContract({
@@ -322,17 +323,21 @@ export class OnChainScanner {
           })
           const bnbBack = sellAmounts[1]
 
-          // Tax estimate: (input - output) / input
-          const totalTax = Number(testBNB - bnbBack) / Number(testBNB)
-          // Assume roughly equal buy/sell split
-          buyTax  = Math.max(0, Math.round(totalTax * 50))
-          sellTax = Math.max(0, Math.round(totalTax * 50))
+          // Round-trip loss = AMM fees (0.25% × 2 ≈ 0.5%) + price impact + real tax.
+          // Subtract the 0.5% AMM baseline so we only flag *actual* token tax.
+          const rawLoss     = Number(testBNB - bnbBack) / Number(testBNB)
+          const AMM_BASE    = 0.005          // 0.9975^2 ≈ 0.4988 loss, round up
+          const taxLoss     = Math.max(0, rawLoss - AMM_BASE)
+          // Can't distinguish buy vs sell tax without transferFrom-level sim;
+          // split evenly. UI shows these as "买税 / 卖税".
+          buyTax  = Math.round(taxLoss * 50)
+          sellTax = Math.round(taxLoss * 50)
 
-          if (totalTax > 0.5) {
-            flags.push(`高税率 ${(totalTax * 100).toFixed(0)}%`)
-            if (totalTax > 0.9) isHoneypot = true
-          } else if (totalTax > 0.1) {
-            flags.push(`存在税率 ${(totalTax * 100).toFixed(0)}%`)
+          if (taxLoss > 0.5) {
+            flags.push(`高税率 ${(taxLoss * 100).toFixed(0)}%`)
+            if (taxLoss > 0.9) isHoneypot = true
+          } else if (taxLoss > 0.1) {
+            flags.push(`存在税率 ${(taxLoss * 100).toFixed(0)}%`)
           }
         } catch {
           // Sell path simulation failed = strong honeypot signal

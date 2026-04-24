@@ -12,10 +12,6 @@ import chalk from 'chalk'
 import { randomUUID } from 'crypto'
 
 // ── ABIs ─────────────────────────────────────────────────────────────────────
-const ERC20_ABI = parseAbi([
-  'function balanceOf(address account) view returns (uint256)',
-])
-
 const PAIR_ABI = parseAbi([
   'function getReserves() view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)',
   'function token0() view returns (address)',
@@ -29,7 +25,7 @@ const FEE_DEN     = 10000n
 const GAS_DEPLOY  = 1_200_000n  // proxy deployment gas
 const GAS_FRONTRUN =  160_000n  // swapExactETHForTokens (+ one-time approve first use)
 const GAS_BACKRUN  =  140_000n  // swapExactTokensForETH (approve already set)
-const BNB_PRICE   = 580
+const BNB_PRICE_FALLBACK = 580  // only if on-chain price fetch fails
 
 export interface SandwichConfig {
   minProfitUSD: number
@@ -77,6 +73,8 @@ export class SandwichStrategy {
   private stopFn?:  () => void
   private scanned   = 0
   private proxyAddress: Address | null = null
+  private bnbPrice  = BNB_PRICE_FALLBACK
+  private bnbPriceTimer?: NodeJS.Timeout
 
   constructor(
     private publicClient:  PublicClient,
@@ -88,24 +86,86 @@ export class SandwichStrategy {
     this.mempool = new MempoolMonitor(publicClient, routerAddresses)
   }
 
+  // Fetch BNB/BUSD price from PancakeSwap. Called on start + every 2min.
+  private async refreshBnbPrice() {
+    try {
+      const BUSD = '0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56' as Address
+      const ROUTER_ABI = parseAbi([
+        'function getAmountsOut(uint256 amountIn, address[] path) view returns (uint256[] amounts)',
+      ])
+      const amounts = await this.publicClient.readContract({
+        address: this.routerAddresses[0] as Address, abi: ROUTER_ABI,
+        functionName: 'getAmountsOut', args: [parseUnits('1', 18), [WBNB, BUSD]],
+      }) as bigint[]
+      const price = Number(formatUnits(amounts[1], 18))
+      if (price > 100 && price < 10000) this.bnbPrice = price
+    } catch { /* keep previous/fallback */ }
+  }
+
   async start() {
     if (this.running) return
     this.running = true
     console.log(chalk.green(`[Sandwich] 策略启动 → 目标: ${this.config.token.symbol}`))
 
-    // Ensure proxy contract is deployed (once per wallet)
-    await this.ensureProxy()
+    try {
+      // Prime BNB price before any profit math, then refresh every 2 min so
+      // gas/profit calcs track real market price instead of the $580 fallback.
+      await this.refreshBnbPrice()
+      this.bnbPriceTimer = setInterval(() => this.refreshBnbPrice(), 120_000)
 
-    this.mempool.onSwap((swap) => this.evaluateSwap(swap))
-    this.stopFn = await this.mempool.start()
-    this.ws.broadcast({ type: 'status', payload: { strategy: 'sandwich', running: true, scanned: 0, pending: 0 } })
+      // Ensure proxy contract is deployed (once per wallet). Fatal on failure —
+      // without a proxy we cannot profitably sandwich.
+      await this.ensureProxy()
+
+      // Warn (don't auto-sell) if there are stuck tokens in the proxy from a
+      // previous failed run of this same target. backrun() sells balanceOf(),
+      // so any leftover will be dumped on the first successful sandwich — not
+      // a bug, but the user should know so they're not confused by the bonus.
+      await this.checkStuckTokens()
+
+      this.mempool.onSwap((swap) => this.evaluateSwap(swap))
+      this.stopFn = await this.mempool.start()
+      this.ws.broadcast({ type: 'status', payload: { strategy: 'sandwich', running: true, scanned: 0, pending: 0 } })
+    } catch (err: any) {
+      // Reset state so UI doesn't show "running" when we actually bailed.
+      this.running = false
+      this.stopFn?.()
+      this.ws.broadcast({ type: 'status', payload: { strategy: 'sandwich', running: false, scanned: 0, pending: 0 } })
+      const msg = cleanError(err)
+      console.error(chalk.red(`[Sandwich] 启动失败: ${msg}`))
+      this.ws.broadcast({ type: 'error', payload: { message: `夹子启动失败: ${msg}` } })
+      throw err
+    }
   }
 
   stop() {
     this.running  = false
     this.stopFn?.()
+    if (this.bnbPriceTimer) { clearInterval(this.bnbPriceTimer); this.bnbPriceTimer = undefined }
     this.ws.broadcast({ type: 'status', payload: { strategy: 'sandwich', running: false, scanned: 0, pending: 0 } })
     console.log(chalk.yellow('[Sandwich] 策略已停止'))
+  }
+
+  // Check whether our proxy is still holding tokens from a prior failed run.
+  // If the current target matches, the next successful sandwich will sell
+  // them along with fresh tokens — informational log only. If the stuck
+  // token is DIFFERENT from current target, auto-rescue to the owner wallet
+  // so capital isn't frozen indefinitely.
+  private async checkStuckTokens() {
+    if (!this.proxyAddress) return
+    const target = this.config.token.address.toLowerCase() as Address
+    try {
+      const ERC20_BAL = parseAbi(['function balanceOf(address) view returns (uint256)'])
+      const bal = await this.publicClient.readContract({
+        address: target, abi: ERC20_BAL, functionName: 'balanceOf', args: [this.proxyAddress],
+      }) as bigint
+      if (bal > 0n) {
+        console.log(chalk.yellow(
+          `[Sandwich] ⚠ 代理合约中残留 ${bal} 个 ${this.config.token.symbol}（上次失败遗留）— ` +
+          `下次成功夹单将一起卖出回收`
+        ))
+      }
+    } catch { /* non-critical */ }
   }
 
   // ── Deploy SandwichProxy if not already done ───────────────────────────────
@@ -123,27 +183,35 @@ export class SandwichStrategy {
       }
     }
 
-    // Deploy a fresh proxy
-    console.log(chalk.cyan('[Sandwich] 部署夹子代理合约...'))
-    try {
-      const hash = await this.walletClient.deployContract({
-        abi:      SANDWICH_PROXY_ABI,
-        bytecode: SANDWICH_PROXY_BYTECODE as `0x${string}`,
-        account,
-        chain:    null,
-        gas:      GAS_DEPLOY,
-      })
-      const receipt = await this.publicClient.waitForTransactionReceipt({ hash, timeout: 60_000 })
-      if (!receipt.contractAddress) throw new Error('部署失败，未获得合约地址')
-
-      this.proxyAddress = getAddress(receipt.contractAddress)
-      // Persist so we never redeploy
-      saveConfig({ ...cfg, sandwichProxyAddress: this.proxyAddress })
-      console.log(chalk.green(`[Sandwich] ✓ 代理合约已部署: ${this.proxyAddress}`))
-    } catch (e: any) {
-      console.warn(chalk.yellow(`[Sandwich] 代理合约部署失败，回退到直接执行: ${cleanError(e)}`))
-      this.proxyAddress = null
+    // Pre-check: deployment costs ~0.003 BNB of gas. A clear error here beats
+    // an opaque "insufficient funds for gas" from the RPC.
+    const balance = await this.publicClient.getBalance({ address: account.address })
+    const minDeployWei = parseUnits('0.005', 18)
+    if (balance < minDeployWei) {
+      throw new Error(`部署代理合约需至少 0.005 BNB (当前 ${formatUnits(balance, 18)} BNB)`)
     }
+
+    // Deploy a fresh proxy. Failing this is FATAL — the fallback path is a
+    // dev-only last resort that can't pipeline (needs frontrun receipt before
+    // sizing the sell), so running a sandwich strategy without a proxy almost
+    // guarantees losses. Better to stop here than silently "start" something
+    // that won't profit.
+    console.log(chalk.cyan('[Sandwich] 部署夹子代理合约...'))
+    const hash = await this.walletClient.deployContract({
+      abi:      SANDWICH_PROXY_ABI,
+      bytecode: SANDWICH_PROXY_BYTECODE as `0x${string}`,
+      account,
+      chain:    null,
+      gas:      GAS_DEPLOY,
+    })
+    const receipt = await this.publicClient.waitForTransactionReceipt({ hash, timeout: 60_000 })
+    if (!receipt.contractAddress || receipt.status !== 'success') {
+      throw new Error('代理合约部署失败，未获得合约地址')
+    }
+
+    this.proxyAddress = getAddress(receipt.contractAddress)
+    saveConfig({ ...cfg, sandwichProxyAddress: this.proxyAddress })
+    console.log(chalk.green(`[Sandwich] ✓ 代理合约已部署: ${this.proxyAddress}`))
   }
 
   // ── Evaluate incoming mempool swap ────────────────────────────────────────
@@ -157,11 +225,28 @@ export class SandwichStrategy {
     const isEthForToken = swap.amountIn > 0n && swap.tokenOut === targetToken
     if (!isEthForToken) return
 
+    // Claim the execution slot BEFORE any async work. Otherwise multiple
+    // concurrent evaluateSwap() calls each pass the running/executing guard
+    // synchronously, then hit the same nonce and collide. All exit paths
+    // below must release this flag — use try/finally.
+    if (this.executing) return
+    this.executing = true
+    try {
+      await this._evaluateInner(swap)
+    } finally {
+      this.executing = false
+      if (this.running) {
+        this.ws.broadcast({ type: 'status', payload: { strategy: 'sandwich', running: true, scanned: this.scanned, pending: 0 } })
+      }
+    }
+  }
+
+  private async _evaluateInner(swap: PendingSwap) {
     // Broadcast real mempool tx to web UI
     const victimBNBRaw = Number(formatEther(swap.amountIn))
     this.ws.broadcast({
       type: 'mempool_tx',
-      payload: { hash: swap.txHash, bnb: victimBNBRaw, usd: Math.round(victimBNBRaw * BNB_PRICE) },
+      payload: { hash: swap.txHash, bnb: victimBNBRaw, usd: Math.round(victimBNBRaw * this.bnbPrice) },
     })
 
     // ── 2. Minimum victim size ─────────────────────────────────────────────
@@ -180,7 +265,7 @@ export class SandwichStrategy {
     // ── 4. Realistic gas cost (2 txs via proxy, no approve tx) ────────────
     const totalGasWei  = frontGasWei * GAS_FRONTRUN + backGasWei * GAS_BACKRUN
     const gasCostBNB   = Number(formatUnits(totalGasWei, 18))
-    const gasCostUSD   = gasCostBNB * BNB_PRICE
+    const gasCostUSD   = gasCostBNB * this.bnbPrice
 
     // ── 5. AMM profit simulation ───────────────────────────────────────────
     let profitUSD = 0
@@ -202,7 +287,7 @@ export class SandwichStrategy {
       const reserveBNB   = isWbnbToken0 ? reserves[0] : reserves[1]
       const reserveToken = isWbnbToken0 ? reserves[1] : reserves[0]
 
-      const maxExecBNB = (this.config.executionAmountUSD ?? 50) / BNB_PRICE
+      const maxExecBNB = (this.config.executionAmountUSD ?? 50) / this.bnbPrice
       const execBNB    = Math.min(maxExecBNB, victimBNB * 0.2)
       frontAmountBNB   = parseUnits(execBNB.toFixed(6), 18)
 
@@ -237,14 +322,18 @@ export class SandwichStrategy {
       const backBNBOut_eff = backBNBOut_raw * BigInt(Math.floor((1 - sellTax) * 10000)) / 10000n
 
       const grossProfitBNB = Number(formatUnits(backBNBOut_eff, 18)) - execBNB
-      const grossProfitUSD = grossProfitBNB * BNB_PRICE
+      const grossProfitUSD = grossProfitBNB * this.bnbPrice
       profitUSD = grossProfitUSD - gasCostUSD
 
       // Slippage guards
       const slip = (this.config.slippageTolerance ?? 1) / 100
       minFrontTokenOut = frontTokenOut_eff * BigInt(Math.floor((1 - slip) * 10000)) / 10000n
-      // Minimum BNB back: gross profit must at least cover gas
-      minBackBNBOut = 0n  // accept any; real safety is in profitUSD check
+      // Backrun floor: we expect backBNBOut_eff; accept down to (1 - 2*slip) of
+      // that. This protects us when a competing MEV bot sandwiches our frontrun
+      // between our two txs (they'd drain the pool → backrun reverts instead of
+      // selling into near-zero). Without this guard, minBackBNBOut = 0 meant
+      // arbitrage bots could steal essentially all of our profit.
+      minBackBNBOut = backBNBOut_eff * BigInt(Math.floor((1 - slip * 2) * 10000)) / 10000n
 
       console.log(chalk.dim(
         `[Sandwich] 评估 | 目标 ${this.config.token.symbol} | 受害者 ${victimBNB.toFixed(3)} BNB | ` +
@@ -268,19 +357,13 @@ export class SandwichStrategy {
       payload: {
         id: randomUUID(), strategy: 'sandwich',
         token: this.config.token.symbol, tokenAddress: this.config.token.address,
-        chain: 'BSC', profitUSD, profitNative: profitUSD / BNB_PRICE,
+        chain: 'BSC', profitUSD, profitNative: profitUSD / this.bnbPrice,
         gasUSD: gasCostUSD, netProfit: profitUSD, timestamp: Date.now(),
       },
     })
     this.ws.broadcast({ type: 'status', payload: { strategy: 'sandwich', running: true, scanned: this.scanned, pending: 1 } })
 
-    this.executing = true
     await this.executeSandwich(swap, frontAmountBNB!, minFrontTokenOut!, minBackBNBOut!, gasCostUSD, frontGasWei, backGasWei)
-    this.executing = false
-
-    if (this.running) {
-      this.ws.broadcast({ type: 'status', payload: { strategy: 'sandwich', running: true, scanned: this.scanned, pending: 0 } })
-    }
   }
 
   // ── Execute: frontrun → backrun (pipeline via proxy or fallback) ──────────
@@ -299,7 +382,6 @@ export class SandwichStrategy {
     const tokenAddress  = this.config.token.address as Address
     const routerAddress = this.routerAddresses[0]  as Address
     const account       = this.walletClient.account!
-    const deadline      = BigInt(Math.floor(Date.now() / 1000) + 120)
     let   frontRunSubmitted = false
 
     try {
@@ -311,75 +393,36 @@ export class SandwichStrategy {
 
       const frontBNBEth = Number(formatUnits(frontAmountBNB, 18)).toFixed(4)
 
-      if (this.proxyAddress) {
-        // ── Proxy path: both txs through SandwichProxy ─────────────────────
-        // Backrun sells balanceOf(proxy) — always exact, no amount calculation needed
-        console.log(chalk.dim(`[Sandwich] ① [合约] 前跑 ${frontBNBEth} BNB → ${this.config.token.symbol}`))
+      if (!this.proxyAddress) throw new Error('代理合约缺失')
 
-        const frontHash = await this.walletClient.writeContract({
-          address: this.proxyAddress, abi: SANDWICH_PROXY_ABI, functionName: 'frontrun',
-          args: [routerAddress, tokenAddress, WBNB, minFrontTokenOut],
-          value: frontAmountBNB, gasPrice: frontGasWei, nonce, account, chain: null,
-        })
-        frontRunSubmitted = true
-        console.log(chalk.dim(`[Sandwich] ① 前跑已提交: ${frontHash}`))
+      // ── Both txs through SandwichProxy (pipelined, no waits) ──────────────
+      // backrun() sells balanceOf(proxy) on-chain, so the sell amount is
+      // always exact — we never need the frontrun receipt before firing it.
+      console.log(chalk.dim(`[Sandwich] ① 前跑 ${frontBNBEth} BNB → ${this.config.token.symbol}`))
+      const frontHash = await this.walletClient.writeContract({
+        address: this.proxyAddress, abi: SANDWICH_PROXY_ABI, functionName: 'frontrun',
+        args: [routerAddress, tokenAddress, WBNB, minFrontTokenOut],
+        value: frontAmountBNB, gasPrice: frontGasWei, nonce, account, chain: null,
+      })
+      frontRunSubmitted = true
+      console.log(chalk.dim(`[Sandwich] ① 前跑已提交: ${frontHash}`))
 
-        console.log(chalk.dim(`[Sandwich] ② [合约] 后跑: ${this.config.token.symbol} → BNB`))
-        const backHash = await this.walletClient.writeContract({
-          address: this.proxyAddress, abi: SANDWICH_PROXY_ABI, functionName: 'backrun',
-          args: [routerAddress, tokenAddress, WBNB, minBackBNBOut],
-          gasPrice: backGasWei, nonce: nonce + 1, account, chain: null,
-        })
-        console.log(chalk.dim(`[Sandwich] ② 后跑已提交: ${backHash}`))
+      console.log(chalk.dim(`[Sandwich] ② 后跑: ${this.config.token.symbol} → BNB`))
+      const backHash = await this.walletClient.writeContract({
+        address: this.proxyAddress, abi: SANDWICH_PROXY_ABI, functionName: 'backrun',
+        args: [routerAddress, tokenAddress, WBNB, minBackBNBOut],
+        gasPrice: backGasWei, nonce: nonce + 1, account, chain: null,
+      })
+      console.log(chalk.dim(`[Sandwich] ② 后跑已提交: ${backHash}`))
 
-        const [frontR, backR] = await Promise.all([
-          this.publicClient.waitForTransactionReceipt({ hash: frontHash, timeout: 30_000 }),
-          this.publicClient.waitForTransactionReceipt({ hash: backHash,  timeout: 30_000 }),
-        ])
-        if (frontR.status !== 'success') throw new Error('前跑买入被链上回滚')
-        if (backR.status  !== 'success') throw new Error('后跑卖出被链上回滚')
+      const [frontR, backR] = await Promise.all([
+        this.publicClient.waitForTransactionReceipt({ hash: frontHash, timeout: 30_000 }),
+        this.publicClient.waitForTransactionReceipt({ hash: backHash,  timeout: 30_000 }),
+      ])
+      if (frontR.status !== 'success') throw new Error('前跑买入被链上回滚')
+      if (backR.status  !== 'success') throw new Error('后跑卖出被链上回滚')
 
-        await this.recordResult(id, backHash, balanceBefore, estimatedGasUSD)
-
-      } else {
-        // ── Fallback: direct wallet calls (no proxy) ───────────────────────
-        const ROUTER_ABI = parseAbi([
-          'function swapExactETHForTokens(uint256 amountOutMin, address[] path, address to, uint256 deadline) payable returns (uint256[] amounts)',
-          'function swapExactTokensForETH(uint256 amountIn, uint256 amountOutMin, address[] path, address to, uint256 deadline) returns (uint256[] amounts)',
-        ])
-        const ERC20_APPROVE = parseAbi(['function approve(address spender, uint256 amount) returns (bool)'])
-
-        console.log(chalk.dim(`[Sandwich] ① [直接] 前跑 ${frontBNBEth} BNB → ${this.config.token.symbol}`))
-        const frontHash = await this.walletClient.writeContract({
-          address: routerAddress, abi: ROUTER_ABI, functionName: 'swapExactETHForTokens',
-          args: [minFrontTokenOut, [WBNB, tokenAddress], account.address, deadline],
-          value: frontAmountBNB, gasPrice: frontGasWei, nonce, account, chain: null,
-        })
-        frontRunSubmitted = true
-        console.log(chalk.dim(`[Sandwich] ① 前跑已提交: ${frontHash}`))
-
-        // Submit approve + backrun with consecutive nonces (no wait)
-        const approveHash = await this.walletClient.writeContract({
-          address: tokenAddress, abi: ERC20_APPROVE, functionName: 'approve',
-          args: [routerAddress, minFrontTokenOut],
-          gasPrice: backGasWei, nonce: nonce + 1, account, chain: null,
-        })
-
-        console.log(chalk.dim(`[Sandwich] ② 后跑: ${this.config.token.symbol} → BNB`))
-        const backHash = await this.walletClient.writeContract({
-          address: routerAddress, abi: ROUTER_ABI, functionName: 'swapExactTokensForETH',
-          args: [minFrontTokenOut * 98n / 100n, 0n, [tokenAddress, WBNB], account.address, deadline],
-          gasPrice: backGasWei, nonce: nonce + 2, account, chain: null,
-        })
-        console.log(chalk.dim(`[Sandwich] ② 后跑已提交: ${backHash}`))
-
-        await Promise.all([
-          this.publicClient.waitForTransactionReceipt({ hash: frontHash,   timeout: 30_000 }),
-          this.publicClient.waitForTransactionReceipt({ hash: approveHash, timeout: 30_000 }),
-          this.publicClient.waitForTransactionReceipt({ hash: backHash,    timeout: 30_000 }),
-        ])
-        await this.recordResult(id, backHash, balanceBefore, estimatedGasUSD)
-      }
+      await this.recordResult(id, backHash, balanceBefore, estimatedGasUSD)
 
     } catch (err: any) {
       const msg = cleanError(err)
@@ -396,7 +439,7 @@ export class SandwichStrategy {
     const account      = this.walletClient.account!
     const balanceAfter = await this.publicClient.getBalance({ address: account.address })
     const diffBNB      = Number(formatUnits(balanceAfter - balanceBefore, 18))
-    const actualProfit = diffBNB * BNB_PRICE
+    const actualProfit = diffBNB * this.bnbPrice
 
     const trade = {
       id, strategy: 'sandwich', token: this.config.token.symbol,

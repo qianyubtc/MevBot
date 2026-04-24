@@ -48,18 +48,29 @@ export class MempoolMonitor {
       const unwatch = this.client.watchPendingTransactions({
         onTransactions: async (hashes) => {
           if (!this.running) return
-          for (const hash of hashes.slice(0, 10)) {
+          // Fetch all hashes in parallel. Old code did `hashes.slice(0, 10)` in
+          // a sequential loop which (a) silently dropped swaps under load and
+          // (b) serialized RPC roundtrips into an artificial latency bottleneck.
+          await Promise.all(hashes.map(async (hash) => {
+            if (!this.running) return
             try {
               const tx = await this.client.getTransaction({ hash })
-              if (!tx || !tx.to) continue
-              if (!this.routerAddresses.includes(tx.to.toLowerCase())) continue
+              if (!tx || !tx.to) return
+              if (!this.routerAddresses.includes(tx.to.toLowerCase())) return
               const sig = tx.input.slice(0, 10).toLowerCase()
-              if (!SWAP_SIGNATURES.includes(sig)) continue
+              if (!SWAP_SIGNATURES.includes(sig)) return
 
               const swap = this.parseSwapTx(tx)
               if (swap) this.handlers.forEach((h) => h(swap))
             } catch {}
-          }
+          }))
+        },
+        // viem's subscription swallows async errors — without this callback a
+        // dropped node connection would silently stop delivering txs forever
+        // (and we'd never notice because the try/catch only wraps the sync
+        // setup, not the stream). Logging lets the user spot dead mempool.
+        onError: (err) => {
+          console.error(chalk.red(`[Mempool] 订阅错误: ${err?.message ?? err}`))
         },
       })
 
@@ -67,8 +78,8 @@ export class MempoolMonitor {
         this.running = false
         unwatch()
       }
-    } catch {
-      console.error(chalk.red('[Mempool] 订阅失败，使用轮询模式'))
+    } catch (e: any) {
+      console.error(chalk.red(`[Mempool] 订阅失败 (${e?.message ?? e})，使用轮询模式`))
       return this.startPolling()
     }
   }
