@@ -77,8 +77,8 @@ function Section({ title, icon, children }: {
   title: string; icon: React.ReactNode; children: React.ReactNode
 }) {
   return (
-    <div className="rounded-xl bg-bg-surface border border-bg-border overflow-hidden">
-      <div className="px-4 py-3 border-b border-bg-border flex items-center gap-2">
+    <div className="rounded-xl bg-bg-surface border border-bg-border">
+      <div className="px-4 py-3 border-b border-bg-border flex items-center gap-2 rounded-t-xl">
         <span className="text-primary">{icon}</span>
         <span className="text-sm font-medium text-white">{title}</span>
       </div>
