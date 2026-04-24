@@ -35,6 +35,35 @@ const BUSD = '0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56' as Address
 const USDT = '0x55d398326f99059fF775485246999027B3197955' as Address
 const BASE_TOKENS = new Set([WBNB.toLowerCase(), BUSD.toLowerCase(), USDT.toLowerCase()])
 
+// High-liquidity PancakeSwap pairs — always scanned even when dynamic fetch fails
+const SEED_PAIRS: Address[] = [
+  '0x58F876857a02D6762E0101bb5C46A8c1ED44Dc16', // WBNB/BUSD
+  '0x61EB789d75A95CAa3fF50ed7E47b96c132fEc082', // BTCB/WBNB
+  '0x74E4716E431f45807DCF19f284c7aA99F18a4fbc', // ETH/WBNB
+  '0x0eD7e52944161450477ee417DE9Cd3a859b14fD0', // CAKE/WBNB
+  '0x16b9a82891338f9bA80E2D6970FddA79D1eb0daE', // WBNB/USDT
+  '0x7EFaEf62fDdCCa950418312c6C702547502517a3', // USDT/BUSD
+  '0xd99c7F6C65857AC913a8f880A4cb84032AB2FC5b', // USDC/BUSD
+  '0xBA51D1AB95756ca4eaB8197eab5335D406F0E6e3', // DOT/WBNB
+  '0xbCD62661A6b1DEd703585d3aF7d7649Ef621861b', // ADA/WBNB
+  '0xA39Af17CE4a8eb807E076805Da1e2B8EA7D0755b', // LINK/WBNB
+  '0xc15fa3E22c912A276550F3E5FE3b0Deb87B55aCd', // DOGE/WBNB
+  '0x2354ef4DF11afacb85a5C7f98B624072ECcddbB1', // XRP/WBNB
+  '0xf3047c77154fe608edd9e35d3e5af05da83ac8cd', // FLOKI/WBNB
+  '0x1B96B92314C44b159149f7E0303511fB2Fc4774f', // USDT/WBNB (v1)
+  '0x3f6b2D68980Db7371D3D0470117393c9262621ea', // PEPE/WBNB
+  '0x66FDB2eCCfB58cF098eaa419e5EfDe841368e489', // TUSD/WBNB
+  '0x326D754c64329aD7cb35744770D56D0E1f3B3124', // SOL/WBNB
+  '0x0392957571F28037607C14832D16f8B653eDd472', // MATIC/WBNB
+  '0x9d4BfA1A3AFBE79F8b0fd2CC55bcFd1cC2E6d0ef', // ATOM/WBNB
+  '0xcb51C98780f8B4c1c27ca2b62ac6a0F2bAF1ca9C', // NEAR/WBNB
+  '0x20bcc3b8a0091ddac2d0bc30f68e6cbb97de59cd', // SHIB/WBNB
+  '0x36b8b28D37f93372188F2aa2507b68A5CD8B2664', // LTC/WBNB
+  '0x3f0A9aB940df9aDE65A23A76FFC0b1Dca937a27c', // AVAX/WBNB
+  '0xdd5bad8f8b360d76d12feB9d7E73Fdc4e5A7e1B', // UNI/WBNB
+  '0x824eb9faDFb377394430d2744fa7C42916DE3eCe', // FIL/WBNB
+]
+
 export interface ScannedToken {
   address: string
   symbol: string
@@ -56,6 +85,14 @@ export interface PriceQuote {
   priceUSD: number
 }
 
+// Wrap a promise with a timeout — resolves to null on timeout instead of throwing
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  return Promise.race([
+    p,
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
+  ])
+}
+
 export class OnChainScanner {
   constructor(
     private client: PublicClient,
@@ -68,77 +105,75 @@ export class OnChainScanner {
   async scanTopPairs(limit = 24): Promise<ScannedToken[]> {
     console.log(chalk.cyan(`[Scanner] 扫描 ${this.dexName} 优质交易对...`))
 
-    // Stable fallback pairs (used only if dynamic scan fails)
-    const FALLBACK_PAIRS: Address[] = [
-      '0x58F876857a02D6762E0101bb5C46A8c1ED44Dc16', // BNB/BUSD
-      '0x61EB789d75A95CAa3fF50ed7E47b96c132fEc082', // BTCB/BNB
-      '0x74E4716E431f45807DCF19f284c7aA99F18a4fbc', // ETH/BNB
-      '0x0eD7e52944161450477ee417DE9Cd3a859b14fD0', // CAKE/BNB
-      '0x16b9a82891338f9bA80E2D6970FddA79D1eb0daE', // BNB/USDT
-    ]
-
+    // ── Step 1: Try dynamic sampling via multicall (fast, 1-2 RPC round trips) ──
+    let dynamicPairs: Address[] = []
     try {
-      // ── Dynamic scan: sample random pairs from recent 5000 ──────────────
-      let pairsToScan: Address[] = []
-      try {
-        const totalPairs = await this.client.readContract({
+      const totalPairsRaw = await withTimeout(
+        this.client.readContract({
           address: this.factoryAddress,
           abi: FACTORY_ABI,
           functionName: 'allPairsLength',
-        })
-        const total = Number(totalPairs)
-        console.log(chalk.dim(`[Scanner] 工厂共有 ${total} 个交易对，随机采样中...`))
+        }),
+        12000 // 12s max for allPairsLength
+      )
 
-        // Sample from different "zones" of recent pairs for diversity
-        const sampleSize = 120
+      if (totalPairsRaw != null) {
+        const total = Number(totalPairsRaw)
+        console.log(chalk.dim(`[Scanner] 工厂共有 ${total} 个交易对，multicall 随机采样...`))
+
+        const sampleSize = 80
         const searchDepth = Math.min(total, 5000)
-        const indices = Array.from({ length: sampleSize }, () =>
-          BigInt(total - 1 - Math.floor(Math.random() * searchDepth))
+        const indicesSet = new Set<number>()
+        while (indicesSet.size < sampleSize) {
+          indicesSet.add(total - 1 - Math.floor(Math.random() * searchDepth))
+        }
+        const indices = [...indicesSet].map(BigInt)
+
+        // Use multicall — all 80 allPairs(i) calls in a single eth_call
+        const multicallResults = await withTimeout(
+          this.client.multicall({
+            contracts: indices.map((i) => ({
+              address: this.factoryAddress,
+              abi: FACTORY_ABI,
+              functionName: 'allPairs' as const,
+              args: [i] as [bigint],
+            })),
+            allowFailure: true,
+          }),
+          15000 // 15s max for multicall
         )
-        // Deduplicate indices
-        const uniqueIndices = [...new Set(indices.map(String))].map(BigInt)
 
-        const results = await Promise.allSettled(
-          uniqueIndices.map((i) => this.client.readContract({
-            address: this.factoryAddress,
-            abi: FACTORY_ABI,
-            functionName: 'allPairs',
-            args: [i],
-          }))
-        )
-        pairsToScan = results
-          .filter((r): r is PromiseFulfilledResult<Address> => r.status === 'fulfilled')
-          .map((r) => r.value)
-      } catch (e: any) {
-        console.warn(chalk.yellow('[Scanner] 动态采样失败，使用备用列表'), e.message)
-        pairsToScan = FALLBACK_PAIRS
+        if (multicallResults) {
+          dynamicPairs = multicallResults
+            .filter((r) => r.status === 'success')
+            .map((r) => r.result as Address)
+          console.log(chalk.dim(`[Scanner] 动态采样获得 ${dynamicPairs.length} 个交易对`))
+        }
+      } else {
+        console.warn(chalk.yellow('[Scanner] allPairsLength 超时，跳过动态采样'))
       }
-
-      // Mix in fallback pairs (always include some reliable liquidity anchors)
-      const allPairs = [...new Set([...FALLBACK_PAIRS, ...pairsToScan])]
-      console.log(chalk.dim(`[Scanner] 分析 ${allPairs.length} 个交易对...`))
-
-      // Analyze in batches to avoid overwhelming the RPC
-      const BATCH = 20
-      const analyzed: ScannedToken[] = []
-      for (let i = 0; i < allPairs.length; i += BATCH) {
-        const batch = allPairs.slice(i, i + BATCH)
-        const results = await Promise.allSettled(batch.map((addr) => this.analyzePair(addr)))
-        results.forEach((r) => {
-          if (r.status === 'fulfilled' && r.value) analyzed.push(r.value)
-        })
-      }
-
-      const tokens = analyzed
-        .sort((a, b) => b.score - a.score)
-        .slice(0, limit)
-
-      console.log(chalk.green(`[Scanner] 扫描完成，找到 ${tokens.length} 个优质代币`))
-      return tokens
-    } catch (err: any) {
-      console.error(chalk.red('[Scanner] 扫描失败:'), err.message)
-      return []
+    } catch (e: any) {
+      console.warn(chalk.yellow('[Scanner] 动态采样失败:'), e.message?.slice(0, 80))
     }
+
+    // ── Step 2: Merge seed + dynamic pairs, deduplicate ──
+    const allPairs = [...new Set([...SEED_PAIRS, ...dynamicPairs])]
+    console.log(chalk.dim(`[Scanner] 分析 ${allPairs.length} 个交易对...`))
+
+    // ── Step 3: Analyze pairs in batches of 20 ──
+    const BATCH = 20
+    const analyzed: ScannedToken[] = []
+    for (let i = 0; i < allPairs.length; i += BATCH) {
+      const batch = allPairs.slice(i, i + BATCH)
+      const results = await Promise.allSettled(batch.map((addr) => this.analyzePair(addr)))
+      results.forEach((r) => {
+        if (r.status === 'fulfilled' && r.value) analyzed.push(r.value)
+      })
+    }
+
+    const tokens = analyzed.sort((a, b) => b.score - a.score).slice(0, limit)
+    console.log(chalk.green(`[Scanner] 扫描完成，找到 ${tokens.length} 个优质代币`))
+    return tokens
   }
 
   private async analyzePair(pairAddress: Address): Promise<ScannedToken | null> {
@@ -168,7 +203,7 @@ export class OnChainScanner {
         this.client.readContract({ address: targetToken, abi: ERC20_ABI, functionName: 'decimals' }).catch(() => 18),
       ])
 
-      const baseDecimals = baseToken.toLowerCase() === WBNB.toLowerCase() ? 18 : 18
+      const baseDecimals = 18
       const baseReserveNum = Number(formatUnits(baseReserve, baseDecimals))
       const isWbnbBase = baseToken.toLowerCase() === WBNB.toLowerCase()
 
@@ -184,7 +219,7 @@ export class OnChainScanner {
       const price = targetReserveNum > 0 ? baseReserveNum / targetReserveNum : 0
       const priceUSD = isWbnbBase ? price * this.bnbPriceUSD : price
 
-      // Score based on liquidity (higher = more sandwichable)
+      // Score based on liquidity
       const score = this.calculateScore(liquidityUSD)
 
       return {
@@ -193,7 +228,7 @@ export class OnChainScanner {
         name: String(name),
         chain: 'BSC',
         liquidity: liquidityUSD,
-        volume24h: 0, // real volume requires off-chain data API
+        volume24h: 0,
         score,
         dex: this.dexName,
         pairAddress,
@@ -260,7 +295,6 @@ export class OnChainScanner {
 
   async getBNBPrice(): Promise<number> {
     try {
-      // Query WBNB/BUSD pair on PancakeSwap
       const amounts = await this.client.readContract({
         address: this.routerAddress,
         abi: ROUTER_ABI,

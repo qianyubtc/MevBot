@@ -21,11 +21,11 @@ export const DEX_FACTORIES: Record<string, Record<string, `0x${string}`>> = {
   },
 }
 
-export function buildClients(rpcUrl: string, privateKey: string, chainName: string) {
+export function buildClients(rpcUrl: string, privateKey: string, chainName: string, timeoutMs = 20000) {
   const chain = CHAINS[chainName] ?? bsc
-  const transport = http(rpcUrl)
+  const transport = http(rpcUrl, { timeout: timeoutMs })
 
-  const publicClient = createPublicClient({ chain, transport })
+  const publicClient = createPublicClient({ chain, transport, batch: { multicall: true } })
   const account = privateKeyToAccount(privateKey as `0x${string}`)
   const walletClient = createWalletClient({ account, chain, transport })
 
