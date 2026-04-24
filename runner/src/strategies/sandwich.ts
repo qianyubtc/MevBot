@@ -23,8 +23,12 @@ const WBNB_LOWER  = WBNB.toLowerCase()
 const FEE_NUM     = 9975n       // PancakeSwap V2: 0.25% fee → 9975/10000
 const FEE_DEN     = 10000n
 const GAS_DEPLOY  = 1_200_000n  // proxy deployment gas
-const GAS_FRONTRUN =  160_000n  // swapExactETHForTokens (+ one-time approve first use)
-const GAS_BACKRUN  =  140_000n  // swapExactTokensForETH (approve already set)
+// Gas limits. Sized for worst-case (first use per token-router pair needs
+// approve in frontrun). Overestimating is cheap (unused gas refunded on BSC);
+// underestimating reverts and we lose 100% of the gas. Prior 160k/140k broke
+// on first use because one-time approve adds ~40k inside frontrun().
+const GAS_FRONTRUN =  220_000n  // swapExactETHForTokens + one-time approve
+const GAS_BACKRUN  =  180_000n  // balanceOf + swapExactTokensForETH
 const BNB_PRICE_FALLBACK = 580  // only if on-chain price fetch fails
 
 export interface SandwichConfig {
@@ -282,6 +286,16 @@ export class SandwichStrategy {
   }
 
   private async _evaluateInner(swap: PendingSwap) {
+    // Ignore our OWN txs: our frontrun/backrun or the proxy's internal calls
+    // show up as BNB→target too and would match this filter. Without this
+    // guard: (a) a lingering pending tx from the previous session triggers a
+    // self-sandwich on restart, (b) if the executing lock ever slips, we
+    // could front-run ourselves. Cheap defense-in-depth.
+    const myAddress = this.walletClient.account!.address.toLowerCase()
+    const fromLc    = swap.from?.toLowerCase()
+    const proxyLc   = this.proxyAddress?.toLowerCase()
+    if (fromLc === myAddress || fromLc === proxyLc) return
+
     // Broadcast real mempool tx to web UI
     const victimBNBRaw = Number(formatEther(swap.amountIn))
     this.ws.broadcast({

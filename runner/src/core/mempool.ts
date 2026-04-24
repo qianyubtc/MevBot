@@ -25,6 +25,24 @@ const SIG_ETH_FOR_EXACT     = '0xfb3bdb41'
 
 const SWAP_SIGNATURES = [SIG_ETH_FOR_TOKENS, SIG_TOKENS_FOR_ETH, SIG_TOKENS_FOR_TOKENS, SIG_ETH_FOR_EXACT]
 
+// Max concurrent getTransaction calls. Free WSS endpoints rate-limit around
+// 25-50 req/s; BSC mempool can deliver 200+ hashes in a single batch during
+// active periods. Bursting Promise.all over all of them will get us banned.
+const MAX_TX_FETCH_CONCURRENCY = 20
+
+// Process items with bounded parallelism. Simpler than pulling in p-limit.
+async function parallelMap<T>(
+  items: T[], workers: number, fn: (item: T) => Promise<void>
+): Promise<void> {
+  let cursor = 0
+  await Promise.all(Array.from({ length: Math.min(workers, items.length) }, async () => {
+    while (cursor < items.length) {
+      const idx = cursor++
+      try { await fn(items[idx]) } catch {}
+    }
+  }))
+}
+
 // Classify RPC errors so we can give users actionable guidance instead of
 // dumping raw viem stack traces.
 function classifyRpcError(err: any): {
@@ -133,23 +151,21 @@ export class MempoolMonitor {
       this.activeUnwatch = this.client.watchPendingTransactions({
         onTransactions: async (hashes) => {
           if (!this.running) return
-          // Reset the reconnect counter — we just got live data, everything's fine.
+          // Reset reconnect counter on any live data.
           this.reconnectAttempt = 0
-          // Parallel fetch; old code had hashes.slice(0, 10) + sequential await
-          // which silently dropped swaps under load.
-          await Promise.all(hashes.map(async (hash) => {
+          // Bounded concurrency — unbounded Promise.all over 200+ hashes on
+          // a free WSS endpoint gets us rate-limited within seconds.
+          await parallelMap(hashes, MAX_TX_FETCH_CONCURRENCY, async (hash) => {
             if (!this.running) return
-            try {
-              const tx = await this.client.getTransaction({ hash })
-              if (!tx || !tx.to) return
-              if (!this.routerAddresses.includes(tx.to.toLowerCase())) return
-              const sig = tx.input.slice(0, 10).toLowerCase()
-              if (!SWAP_SIGNATURES.includes(sig)) return
+            const tx = await this.client.getTransaction({ hash })
+            if (!tx || !tx.to) return
+            if (!this.routerAddresses.includes(tx.to.toLowerCase())) return
+            const sig = tx.input.slice(0, 10).toLowerCase()
+            if (!SWAP_SIGNATURES.includes(sig)) return
 
-              const swap = this.parseSwapTx(tx)
-              if (swap) this.handlers.forEach((h) => h(swap))
-            } catch {}
-          }))
+            const swap = this.parseSwapTx(tx)
+            if (swap) this.handlers.forEach((h) => h(swap))
+          })
         },
         // viem swallows async errors from the polling loop — without this we'd
         // silently stop receiving txs when the filter expires or the node blips.
