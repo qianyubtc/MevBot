@@ -6,6 +6,7 @@ interface Props {
   token: Token
   onSelect?: (token: Token) => void
   selected?: boolean
+  running?: boolean   // true = this token is the active sandwich target
 }
 
 const SCORE_COLOR = (s: number) => s >= 80 ? 'text-success' : s >= 60 ? 'text-warning' : 'text-danger'
@@ -45,7 +46,7 @@ function SafetyBadge({ token }: { token: Token }) {
   )
 }
 
-export default function TokenCard({ token, onSelect, selected }: Props) {
+export default function TokenCard({ token, onSelect, selected, running }: Props) {
   const score = Math.round(token.score)
   const hasSafety = token.safetyScore !== undefined
 
@@ -53,13 +54,25 @@ export default function TokenCard({ token, onSelect, selected }: Props) {
     <div
       onClick={() => onSelect?.(token)}
       className={cn(
-        'rounded-xl border p-4 cursor-pointer transition-all hover:border-primary/40',
-        selected ? 'bg-primary-dim border-primary/40' : 'bg-bg-surface border-bg-border',
+        'rounded-xl border p-4 cursor-pointer transition-all',
+        running
+          ? 'bg-success/5 border-success/40 hover:border-success/60 ring-1 ring-success/20'
+          : selected
+            ? 'bg-primary-dim border-primary/40 hover:border-primary/60'
+            : 'bg-bg-surface border-bg-border hover:border-primary/40',
       )}
     >
       <div className="flex items-start justify-between mb-2">
         <div>
-          <div className="font-mono font-semibold text-white text-sm">{token.symbol}</div>
+          <div className="flex items-center gap-2">
+            <div className="font-mono font-semibold text-white text-sm">{token.symbol}</div>
+            {running && (
+              <span className="flex items-center gap-1 px-1.5 py-0.5 rounded text-xs bg-success/15 border border-success/30 text-success">
+                <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse inline-block" />
+                运行中
+              </span>
+            )}
+          </div>
           <div className="text-xs text-text-muted mt-0.5">{token.name}</div>
         </div>
         <div className="flex items-center gap-1.5">

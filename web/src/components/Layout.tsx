@@ -15,6 +15,17 @@ export default function Layout() {
     setTokens,
   } = useStore()
 
+  // Helper: pin running token to top of sandwich list after any scan result
+  function mergeTokensWithRunning(strategy: string, incoming: import('@/lib/ws').Token[]) {
+    if (strategy !== 'sandwich') return incoming
+    const runningToken = useStore.getState().sandwichRunningToken
+    if (!runningToken) return incoming
+    const addr = runningToken.address.toLowerCase()
+    // Remove from wherever it might appear, then prepend
+    const rest = incoming.filter(t => t.address.toLowerCase() !== addr)
+    return [runningToken, ...rest]
+  }
+
   useEffect(() => {
     wsClient.connect()
 
@@ -35,9 +46,11 @@ export default function Layout() {
         case 'opportunity':
           addOpportunity(msg.payload)
           break
-        case 'tokens':
-          setTokens(msg.strategy ?? 'sandwich', msg.payload)
+        case 'tokens': {
+          const strategy = msg.strategy ?? 'sandwich'
+          setTokens(strategy, mergeTokensWithRunning(strategy, msg.payload))
           break
+        }
       }
     })
 

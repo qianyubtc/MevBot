@@ -293,8 +293,26 @@ export default function Sandwich() {
           {/* Token grid */}
           {!scanning && tokenList.length > 0 && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {[...tokenList].sort((a, b) => b.score - a.score).map((token) => (
-                <TokenCard key={token.address} token={token} selected={selected?.address === token.address} onSelect={setSelected} />
+              {(() => {
+                // Always pin the running token to top; sort the rest by score
+                const runningAddr = runningToken?.address?.toLowerCase()
+                const sorted = [...tokenList].sort((a, b) => b.score - a.score)
+                if (!runningAddr) return sorted
+                const isInList = sorted.some(t => t.address.toLowerCase() === runningAddr)
+                const rest = sorted.filter(t => t.address.toLowerCase() !== runningAddr)
+                // If running token isn't in list at all (custom CA, pre-scan), prepend from store
+                const pinnedToken = isInList
+                  ? sorted.find(t => t.address.toLowerCase() === runningAddr)!
+                  : runningToken!
+                return [pinnedToken, ...rest]
+              })().map((token) => (
+                <TokenCard
+                  key={token.address}
+                  token={token}
+                  selected={selected?.address === token.address}
+                  running={runningToken?.address?.toLowerCase() === token.address.toLowerCase()}
+                  onSelect={isRunning ? undefined : setSelected}  // block re-selection while running
+                />
               ))}
             </div>
           )}
