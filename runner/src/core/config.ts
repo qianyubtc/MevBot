@@ -23,7 +23,7 @@ export interface RunnerConfig {
 
 const DEFAULTS: RunnerConfig = {
   chain: 'BSC',
-  rpcUrl: 'https://bsc-dataseed.binance.org',
+  rpcUrl: 'wss://bsc-rpc.publicnode.com',
   privateKey: '',
   walletAddress: '',
   telegramToken: '',

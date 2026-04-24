@@ -87,7 +87,7 @@ interface AppState {
 
 const defaultConfig: Config = {
   chain: 'BSC',
-  rpcUrl: 'https://bsc-dataseed.binance.org',
+  rpcUrl: 'wss://bsc-rpc.publicnode.com',
   privateKey: '',
   walletAddress: '',
   telegramToken: '',

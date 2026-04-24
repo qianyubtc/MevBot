@@ -20,17 +20,19 @@ const CHAIN_CONFIG: Record<Chain, {
   BSC: {
     label: 'BNB Smart Chain',
     presets: [
-      { label: 'Defibit ⚡ (推荐)',        url: 'https://bsc-dataseed1.defibit.io'           },
-      { label: 'Ninicoin ⚡ (推荐)',      url: 'https://bsc-dataseed1.ninicoin.io'          },
-      { label: 'DefibitNode 2',          url: 'https://bsc-dataseed2.defibit.io'           },
-      { label: 'Nariox',                 url: 'https://bsc-dataseed.nariox.org'            },
-      { label: '48Club (低延迟)',         url: 'https://rpc-bsc.48.club'                    },
-      { label: 'BlastAPI',               url: 'https://bsc-mainnet.public.blastapi.io'     },
-      { label: 'Ankr Public',            url: 'https://rpc.ankr.com/bsc'                   },
-      { label: 'NodeReal Free',          url: 'https://bsc-mainnet.nodereal.io/v1/64a9df0874fb4a93b9d0a3849de012d3' },
-      { label: 'Binance Official',       url: 'https://bsc-dataseed.binance.org'           },
-      { label: 'Binance Dataseed 1',     url: 'https://bsc-dataseed1.binance.org'          },
-      { label: '自定义...',              url: ''                                             },
+      // ── WSS 节点（夹子策略必须用这类，支持 eth_subscribe 实时 mempool）──
+      { label: 'PublicNode WSS ⚡ 夹子推荐',  url: 'wss://bsc-rpc.publicnode.com'              },
+      { label: 'CallStatic WSS ⚡ 夹子推荐',  url: 'wss://bsc.callstaticrpc.com'               },
+      { label: 'dRPC WSS ⚡',                url: 'wss://bsc.drpc.org'                        },
+      { label: 'Nariox WSS',                url: 'wss://bsc-ws-node.nariox.org:443'          },
+      // ── HTTP 节点（仅扫描/查询，夹子策略不能用）──
+      { label: 'PublicNode HTTP',           url: 'https://bsc-rpc.publicnode.com'            },
+      { label: 'LlamaRPC HTTP',             url: 'https://binance.llamarpc.com'              },
+      { label: 'dRPC HTTP',                 url: 'https://bsc.drpc.org'                      },
+      { label: '48Club HTTP (低延迟)',       url: 'https://rpc-bsc.48.club'                   },
+      { label: 'NodeReal Free (示例)',       url: 'https://bsc-mainnet.nodereal.io/v1/64a9df0874fb4a93b9d0a3849de012d3' },
+      { label: 'Binance Official (仅查询)',  url: 'https://bsc-dataseed.binance.org'          },
+      { label: '自定义...',                  url: ''                                           },
     ],
   },
   SOL: {
@@ -239,7 +241,7 @@ export default function Settings() {
         <Field
           label="RPC 节点"
           hint={isBSC
-            ? '建议使用 48Club / NodeReal 私有节点获取更快的 Mempool'
+            ? '夹子策略必须用 WSS 节点（wss:// 开头）才能订阅 mempool。HTTP 节点仅支持扫描和查询。'
             : '建议使用 Helius 私有节点，Solana 交易速度更快'}
         >
           <div className="space-y-2">
