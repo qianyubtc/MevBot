@@ -42,6 +42,22 @@ jobs:
         working-directory: runner
         run: npx esbuild src/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist-cjs/bundle.js
 
+      # Sync version from git tag (app-v0.2.3 → 0.2.3)
+      - name: Set version from tag
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"           # e.g. app-v0.2.3
+          VERSION="${TAG#app-v}"             # strip "app-v" prefix → 0.2.3
+          echo "Building version: $VERSION"
+          # Patch package.json in-place without npm version (avoids git commit)
+          node -e "
+            const fs = require('fs');
+            const p = 'runner-app/package.json';
+            const pkg = JSON.parse(fs.readFileSync(p,'utf8'));
+            pkg.version = '$VERSION';
+            fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + '\n');
+          "
+
       # Build Electron app
       - name: Install app deps
         working-directory: runner-app
