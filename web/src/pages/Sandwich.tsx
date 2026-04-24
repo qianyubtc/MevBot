@@ -106,7 +106,7 @@ export default function Sandwich() {
 
   const sliderParams = [
     { label: '最小利润 (USD)',      key: 'minProfitUSD',          min: 1,    max: 200,    step: 1,    unit: '$' },
-    { label: '执行金额 (USD)',       key: 'executionAmountUSD',    min: 20,   max: 5000,   step: 10,   unit: '$' },
+    { label: '执行金额 (USD)',       key: 'executionAmountUSD',    min: 10,   max: 5000,   step: 10,   unit: '$' },
     { label: '最大 Gas (Gwei)',      key: 'maxGasGwei',            min: 1,    max: 100,    step: 1,    unit: 'Gwei' },
     { label: '优先 Gas 倍数',        key: 'priorityGasMultiplier', min: 1,    max: 10,     step: 0.5,  unit: 'x' },
     { label: '滑点容忍 (%)',         key: 'slippageTolerance',     min: 0.1,  max: 5,      step: 0.1,  unit: '%' },

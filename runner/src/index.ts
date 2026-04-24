@@ -109,11 +109,14 @@ ws.on(async (msg, client) => {
       const account = privateKeyToAccount(cfg.privateKey as `0x${string}`)
       const raw = await scanClient.getBalance({ address: account.address })
       const bnb = parseFloat(formatUnits(raw, 18))
-      const MIN_BNB = 0.05
+      // Dynamic minimum: execution amount in BNB + 0.005 BNB gas buffer
+      const execUSD = config?.executionAmountUSD ?? 20
+      const BNB_PRICE = 580
+      const MIN_BNB = parseFloat((execUSD / BNB_PRICE + 0.005).toFixed(4))
       if (bnb < MIN_BNB) {
         ws.send(client, {
           type: 'error',
-          payload: { message: `BNB 余额不足：当前 ${bnb.toFixed(4)} BNB，夹子策略至少需要 ${MIN_BNB} BNB（Gas + 本金）` },
+          payload: { message: `BNB 余额不足：当前 ${bnb.toFixed(4)} BNB，执行金额 $${execUSD} 至少需要 ${MIN_BNB} BNB（本金 + Gas）` },
         })
         return
       }
