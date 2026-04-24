@@ -96,13 +96,13 @@ const defaultConfig: Config = {
 
 const defaultStrategyConfig: StrategyConfig = {
   sandwich: {
-    minProfitUSD: 5,
-    maxGasGwei: 10,
-    priorityGasMultiplier: 2,
-    minLiquidityUSD: 50000,
-    executionAmountUSD: 5,
-    slippageTolerance: 0.5,
-    maxConcurrent: 2,
+    minProfitUSD: 3,
+    maxGasGwei: 5,
+    priorityGasMultiplier: 1.5,
+    minLiquidityUSD: 100000,
+    executionAmountUSD: 50,
+    slippageTolerance: 1,
+    maxConcurrent: 1,
     targetDexes: ['PancakeSwap', 'BiSwap'],
     enabled: false,
   },
