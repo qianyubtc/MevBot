@@ -1,6 +1,5 @@
 import { cn, formatUSD, shortenAddress } from '@/lib/utils'
 import type { Token } from '@/lib/ws'
-import { ExternalLink } from 'lucide-react'
 
 interface Props {
   token: Token
@@ -8,19 +7,12 @@ interface Props {
   selected?: boolean
 }
 
-const SCORE_COLOR = (score: number) => {
-  if (score >= 80) return 'text-success'
-  if (score >= 60) return 'text-warning'
-  return 'text-danger'
-}
-
-const SCORE_BG = (score: number) => {
-  if (score >= 80) return 'bg-success/10 border-success/20'
-  if (score >= 60) return 'bg-warning/10 border-warning/20'
-  return 'bg-danger/10 border-danger/20'
-}
+const SCORE_COLOR = (s: number) => s >= 80 ? 'text-success' : s >= 60 ? 'text-warning' : 'text-danger'
+const SCORE_BG    = (s: number) => s >= 80 ? 'bg-success/10 border-success/20' : s >= 60 ? 'bg-warning/10 border-warning/20' : 'bg-danger/10 border-danger/20'
 
 export default function TokenCard({ token, onSelect, selected }: Props) {
+  const score = Math.round(token.score)
+
   return (
     <div
       onClick={() => onSelect?.(token)}
@@ -34,8 +26,8 @@ export default function TokenCard({ token, onSelect, selected }: Props) {
           <div className="font-mono font-semibold text-white text-sm">{token.symbol}</div>
           <div className="text-xs text-text-muted mt-0.5">{token.name}</div>
         </div>
-        <div className={cn('px-2 py-0.5 rounded-md border text-xs font-mono font-semibold', SCORE_BG(token.score), SCORE_COLOR(token.score))}>
-          {token.score}分
+        <div className={cn('px-2 py-0.5 rounded-md border text-xs font-mono font-semibold', SCORE_BG(score), SCORE_COLOR(score))}>
+          {score} 分
         </div>
       </div>
 
@@ -45,8 +37,10 @@ export default function TokenCard({ token, onSelect, selected }: Props) {
           <div className="font-mono text-white">{formatUSD(token.liquidity)}</div>
         </div>
         <div>
-          <div className="text-text-muted">24h 成交</div>
-          <div className="font-mono text-white">{formatUSD(token.volume24h)}</div>
+          <div className="text-text-muted">价格</div>
+          <div className="font-mono text-white">
+            {(token.priceUSD ?? 0) > 0 ? `$${(token.priceUSD ?? 0) < 0.01 ? (token.priceUSD ?? 0).toExponential(2) : (token.priceUSD ?? 0).toFixed(4)}` : '--'}
+          </div>
         </div>
         <div>
           <div className="text-text-muted">DEX</div>

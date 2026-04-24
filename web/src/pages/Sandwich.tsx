@@ -1,38 +1,87 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useStore } from '@/store'
 import { wsClient } from '@/lib/ws'
 import TokenCard from '@/components/TokenCard'
 import type { Token } from '@/lib/ws'
-import { Play, Square, Search, RefreshCw, Loader2, WifiOff } from 'lucide-react'
+import { Play, Square, Search, RefreshCw, Loader2, WifiOff, AlertTriangle } from 'lucide-react'
 import { cn, formatUSD } from '@/lib/utils'
 
 export default function Sandwich() {
-  const { activeStrategies, strategyConfig, updateStrategyConfig, tokens, runnerConnected, lastTokensAt } = useStore()
+  const { activeStrategies, strategyConfig, updateStrategyConfig, tokens, config, runnerConnected, lastTokensAt } = useStore()
   const isRunning = activeStrategies['sandwich'] ?? false
   const cfg = strategyConfig.sandwich
   const tokenList: Token[] = tokens['sandwich'] ?? []
   const [selected, setSelected] = useState<Token | null>(null)
   const [scanning, setScanning] = useState(false)
+  const [caInput, setCaInput] = useState('')
+  const [caLoading, setCaLoading] = useState(false)
+  const [caError, setCaError] = useState('')
+  const [startError, setStartError] = useState('')
+  const offRef = useRef<(() => void) | null>(null)
 
   useEffect(() => { setScanning(false) }, [lastTokensAt])
 
+  // Listen for analyze_token result
+  useEffect(() => {
+    const off = wsClient.on((msg: any) => {
+      if (msg.type === 'token_analyzed') {
+        setCaLoading(false)
+        setCaError('')
+        // Add to token list if not already present
+        const existing = tokens['sandwich'] ?? []
+        if (!existing.find((t: Token) => t.address.toLowerCase() === msg.payload.address.toLowerCase())) {
+          useStore.getState().setTokens('sandwich', [msg.payload, ...existing])
+        }
+        setSelected(msg.payload)
+        setCaInput('')
+      }
+      if (msg.type === 'error' && caLoading) {
+        setCaLoading(false)
+        setCaError(msg.payload.message)
+      }
+    })
+    offRef.current = off
+    return () => off()
+  }, [caLoading, tokens])
+
   const handleStartStop = () => {
+    setStartError('')
     if (isRunning) {
       wsClient.send({ type: 'stop', payload: { strategy: 'sandwich' } })
-    } else if (selected) {
-      wsClient.send({
-        type: 'start',
-        payload: { strategy: 'sandwich', token: selected, config: cfg },
-      })
+      return
     }
+    if (!config.privateKey) {
+      setStartError('请先在「设置」页配置钱包私钥')
+      return
+    }
+    if (!selected) return
+    wsClient.send({
+      type: 'start',
+      payload: { strategy: 'sandwich', token: selected, config: cfg },
+    })
   }
 
   const handleScan = () => {
     if (!runnerConnected) return
     setScanning(true)
     wsClient.send({ type: 'scan', payload: { strategy: 'sandwich', params: cfg } })
-    // Runner will respond with 'tokens' message; fallback timeout
     setTimeout(() => setScanning(false), 30000)
+  }
+
+  const handleAnalyzeCA = () => {
+    const addr = caInput.trim()
+    if (!addr || !/^0x[0-9a-fA-F]{40}$/.test(addr)) {
+      setCaError('请输入有效的合约地址（0x + 40位十六进制）')
+      return
+    }
+    if (!runnerConnected) {
+      setCaError('Runner 未连接，无法查询')
+      return
+    }
+    setCaError('')
+    setCaLoading(true)
+    wsClient.send({ type: 'analyze_token', payload: { address: addr } })
+    setTimeout(() => { setCaLoading(false); setCaError('查询超时，请重试') }, 15000)
   }
 
   return (
@@ -68,9 +117,41 @@ export default function Sandwich() {
         </div>
       </div>
 
+      {/* Wallet warning */}
+      {startError && (
+        <div className="rounded-xl border border-warning/30 bg-warning/5 px-4 py-3 flex items-center gap-2 text-sm text-warning">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+          {startError}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Token list */}
         <div className="lg:col-span-2 space-y-4">
+          {/* CA input */}
+          <div className="rounded-xl bg-bg-surface border border-bg-border p-3 space-y-2">
+            <div className="text-xs text-text-muted">自定义代币 — 输入合约地址 (CA) 直接查询</div>
+            <div className="flex gap-2">
+              <input
+                className="flex-1 bg-bg-elevated border border-bg-border rounded-lg px-3 py-2 text-sm text-white font-mono placeholder:text-text-muted focus:outline-none focus:border-primary/50 transition-colors"
+                placeholder="0x..."
+                value={caInput}
+                onChange={(e) => { setCaInput(e.target.value); setCaError('') }}
+                onKeyDown={(e) => e.key === 'Enter' && handleAnalyzeCA()}
+              />
+              <button
+                onClick={handleAnalyzeCA}
+                disabled={caLoading || !caInput.trim()}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-bg text-sm font-medium hover:bg-primary-hover disabled:opacity-50 transition-colors"
+              >
+                {caLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                查询
+              </button>
+            </div>
+            {caError && <div className="text-xs text-danger">{caError}</div>}
+          </div>
+
+          {/* List header */}
           <div className="flex items-center gap-2">
             <Search className="w-4 h-4 text-text-muted" />
             <span className="text-sm text-text-muted">
@@ -78,12 +159,13 @@ export default function Sandwich() {
             </span>
             {tokenList.length > 0 && (
               <span className="px-1.5 py-0.5 rounded text-xs bg-success/10 text-success border border-success/20">
-                真实数据
+                链上数据
               </span>
             )}
+            <span className="ml-auto text-xs text-text-muted">扫描为只读，启动需配置钱包</span>
           </div>
 
-          {/* Loading state */}
+          {/* Loading skeletons */}
           {scanning && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {Array.from({ length: 6 }).map((_, i) => (
@@ -110,13 +192,13 @@ export default function Sandwich() {
                 <>
                   <Search className="w-8 h-8 text-text-muted mx-auto mb-3" />
                   <div className="text-sm text-text-muted mb-2">暂无扫描结果</div>
-                  <div className="text-xs text-text-muted">点击「扫描币种」从链上获取真实数据</div>
+                  <div className="text-xs text-text-muted">点击「扫描币种」从链上获取数据，或输入 CA 直接查询</div>
                 </>
               ) : (
                 <>
                   <WifiOff className="w-8 h-8 text-text-muted mx-auto mb-3" />
                   <div className="text-sm text-text-muted mb-2">Runner 未连接</div>
-                  <div className="text-xs text-text-muted">启动本地 Runner 后可扫描真实链上数据</div>
+                  <div className="text-xs text-text-muted">启动本地 MEV Terminal 后可扫描链上数据</div>
                 </>
               )}
             </div>
@@ -148,6 +230,14 @@ export default function Sandwich() {
             </div>
           )}
 
+          {/* Wallet check warning */}
+          {!config.privateKey && (
+            <div className="rounded-xl border border-warning/20 bg-warning/5 p-3 text-xs text-warning/80 flex gap-2">
+              <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+              <span>未配置钱包私钥，扫描正常，但无法启动策略</span>
+            </div>
+          )}
+
           {/* Parameters */}
           <div className="rounded-xl bg-bg-surface border border-bg-border p-4 space-y-4">
             <div className="text-sm font-medium text-white">策略参数</div>
@@ -163,14 +253,9 @@ export default function Sandwich() {
                   <span className="font-mono text-white">{(cfg as any)[key]}</span>
                 </div>
                 <input
-                  type="range"
-                  min={min}
-                  max={max}
-                  step={step}
+                  type="range" min={min} max={max} step={step}
                   value={(cfg as any)[key]}
-                  onChange={(e) =>
-                    updateStrategyConfig('sandwich', { [key]: Number(e.target.value) } as any)
-                  }
+                  onChange={(e) => updateStrategyConfig('sandwich', { [key]: Number(e.target.value) } as any)}
                   className="w-full h-1.5 bg-bg-border rounded-full appearance-none cursor-pointer accent-primary"
                 />
               </div>
@@ -183,10 +268,9 @@ export default function Sandwich() {
                   <button
                     key={dex}
                     onClick={() => {
-                      const current = cfg.targetDexes
-                      const next = current.includes(dex)
-                        ? current.filter((d) => d !== dex)
-                        : [...current, dex]
+                      const next = cfg.targetDexes.includes(dex)
+                        ? cfg.targetDexes.filter(d => d !== dex)
+                        : [...cfg.targetDexes, dex]
                       updateStrategyConfig('sandwich', { targetDexes: next })
                     }}
                     className={cn(

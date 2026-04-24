@@ -9,6 +9,7 @@ import chalk from 'chalk'
 const FACTORY_ABI = parseAbi([
   'function allPairsLength() view returns (uint256)',
   'function allPairs(uint256 index) view returns (address)',
+  'function getPair(address tokenA, address tokenB) view returns (address pair)',
 ])
 
 const PAIR_ABI = parseAbi([
@@ -198,7 +199,7 @@ export class OnChainScanner {
         name: String(name),
         chain: 'BSC',
         liquidity: liquidityUSD,
-        volume24h: liquidityUSD * (0.1 + Math.random() * 0.4), // approximation
+        volume24h: 0, // real volume requires off-chain data API
         score,
         dex: this.dexName,
         pairAddress,
@@ -211,12 +212,33 @@ export class OnChainScanner {
   }
 
   private calculateScore(liquidityUSD: number): number {
-    // Sandwich suitability: ideal range $50k-$5M (too small = no profit, too large = price impact too low)
-    if (liquidityUSD < 10000) return 20
-    if (liquidityUSD < 50000) return 50 + Math.random() * 15
-    if (liquidityUSD < 500000) return 70 + Math.random() * 20
-    if (liquidityUSD < 5000000) return 85 + Math.random() * 10
-    return 60 + Math.random() * 15
+    // Sandwich suitability: ideal range $50k-$5M
+    let raw: number
+    if (liquidityUSD < 10000) raw = 20
+    else if (liquidityUSD < 50000) raw = 55
+    else if (liquidityUSD < 500000) raw = 75
+    else if (liquidityUSD < 5000000) raw = 88
+    else raw = 65
+    return Math.round(raw * 10) / 10
+  }
+
+  // Analyze a specific token by CA — find its best pair on this DEX
+  async analyzeToken(tokenAddress: Address): Promise<ScannedToken | null> {
+    const bases: Address[] = [WBNB, BUSD, USDT]
+    for (const base of bases) {
+      try {
+        const pairAddress = await this.client.readContract({
+          address: this.factoryAddress,
+          abi: FACTORY_ABI,
+          functionName: 'getPair',
+          args: [tokenAddress, base],
+        }) as Address
+        if (!pairAddress || pairAddress === '0x0000000000000000000000000000000000000000') continue
+        const result = await this.analyzePair(pairAddress)
+        if (result) return result
+      } catch {}
+    }
+    return null
   }
 
   async getMultiDexPrices(

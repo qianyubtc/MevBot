@@ -101,6 +101,30 @@ ws.on(async (msg, client) => {
     if (s) { s.stop(); delete strategies[strategy] }
   }
 
+  // ── Analyze single token by CA ───────────────────────────
+  if (type === 'analyze_token') {
+    const { address } = payload
+    try {
+      cfg = loadConfig()
+      const { publicClient } = buildScanClient()
+      const factories = DEX_FACTORIES[cfg.chain] ?? {}
+      const routers = DEX_ROUTERS[cfg.chain] ?? {}
+      const factoryName = Object.keys(factories)[0] ?? 'PancakeSwap'
+      const bnbScanner = new OnChainScanner(publicClient, factories[factoryName] as `0x${string}`, routers[factoryName] as `0x${string}`, factoryName)
+      const bnbPrice = await bnbScanner.getBNBPrice()
+      const scanner = new OnChainScanner(publicClient, factories[factoryName] as `0x${string}`, routers[factoryName] as `0x${string}`, factoryName, bnbPrice)
+      const token = await scanner.analyzeToken(address)
+      if (token) {
+        ws.send(client, { type: 'token_analyzed', payload: token })
+      } else {
+        ws.send(client, { type: 'error', payload: { message: `未找到该合约的流动性池: ${address}` } })
+      }
+    } catch (err: any) {
+      ws.send(client, { type: 'error', payload: { message: `查询失败: ${err.message}` } })
+    }
+    return
+  }
+
   // ── Scanner ──────────────────────────────────────────────
   if (type === 'scan') {
     console.log(chalk.cyan(`[Runner] 扫描: ${payload.strategy}`))
