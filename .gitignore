@@ -19,3 +19,7 @@ runner/.env
 
 # OS
 .DS_Store
+contracts/node_modules/
+contracts/artifacts/
+contracts/cache/
+contracts/typechain-types/

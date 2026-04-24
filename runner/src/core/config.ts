@@ -18,6 +18,7 @@ export interface RunnerConfig {
   maxSlippage: number
   maxPositionUSD: number
   dailyLossLimit: number
+  sandwichProxyAddress?: string   // deployed SandwichProxy contract address (auto-set on first run)
 }
 
 const DEFAULTS: RunnerConfig = {
