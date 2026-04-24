@@ -3,8 +3,61 @@ import { useStore } from '@/store'
 import { wsClient } from '@/lib/ws'
 import TokenCard from '@/components/TokenCard'
 import type { Token } from '@/lib/ws'
-import { Play, Square, Search, RefreshCw, Loader2, WifiOff, AlertTriangle } from 'lucide-react'
+import { Play, Square, Search, RefreshCw, Loader2, WifiOff, AlertTriangle, Crosshair, Activity } from 'lucide-react'
 import { cn, formatUSD } from '@/lib/utils'
+
+// ── Animated mempool feed ─────────────────────────────────────────────────
+function MempoolFeed() {
+  const [lines, setLines] = useState<{ id: number; hash: string; bnb: string; fresh: boolean }[]>([])
+  const counter = useRef(0)
+
+  useEffect(() => {
+    const tick = () => {
+      const hash = '0x' + Array.from({ length: 8 }, () =>
+        Math.floor(Math.random() * 16).toString(16)
+      ).join('') + '…'
+      const bnb = (Math.random() * 80 + 0.5).toFixed(2)
+      const id = ++counter.current
+      setLines(prev => [{ id, hash, bnb, fresh: true }, ...prev].slice(0, 5))
+      // Un-highlight after one tick
+      setTimeout(() => setLines(prev => prev.map(l => l.id === id ? { ...l, fresh: false } : l)), 400)
+    }
+    // Irregular cadence like real mempool
+    let timer: ReturnType<typeof setTimeout>
+    const schedule = () => {
+      timer = setTimeout(() => { tick(); schedule() }, 600 + Math.random() * 1400)
+    }
+    schedule()
+    return () => clearTimeout(timer)
+  }, [])
+
+  return (
+    <div className="rounded-lg bg-bg-elevated border border-bg-border p-3 space-y-1.5">
+      <div className="flex items-center gap-1.5 mb-2">
+        <Activity className="w-3 h-3 text-primary" />
+        <span className="text-xs text-text-muted">Mempool 交易流</span>
+        <span className="ml-auto flex gap-0.5">
+          {[0,1,2].map(i => (
+            <span key={i} className="inline-block w-1 bg-primary rounded-full animate-bounce"
+              style={{ height: `${6 + i * 3}px`, animationDelay: `${i * 0.15}s` }} />
+          ))}
+        </span>
+      </div>
+      {lines.length === 0 && (
+        <div className="text-xs text-text-muted opacity-40 font-mono">等待交易流…</div>
+      )}
+      {lines.map(({ id, hash, bnb, fresh }) => (
+        <div key={id} className={cn(
+          'flex items-center justify-between font-mono text-xs transition-colors duration-300',
+          fresh ? 'text-primary' : 'text-text-muted opacity-60'
+        )}>
+          <span>{hash}</span>
+          <span>{bnb} BNB</span>
+        </div>
+      ))}
+    </div>
+  )
+}
 
 export default function Sandwich() {
   const { activeStrategies, strategyConfig, updateStrategyConfig, tokens, config, runnerConnected, lastTokensAt, setTokens } = useStore()
@@ -232,22 +285,83 @@ export default function Sandwich() {
 
         {/* ── Right: config ── */}
         <div className="space-y-4">
-          {/* Selected token */}
-          {selected && (
-            <div className="rounded-xl bg-primary-dim border border-primary/30 p-4">
-              <div className="text-xs text-primary mb-1">已选择目标</div>
-              <div className="font-mono font-semibold text-white">{selected.symbol}</div>
-              <div className="text-xs text-text-muted">{selected.dex} · {formatUSD(selected.liquidity)} 流动性</div>
-              <div className="font-mono text-xs text-text-muted mt-1 break-all">{selected.address}</div>
-            </div>
-          )}
 
-          {/* No wallet warning */}
-          {!config.privateKey && (
-            <div className="rounded-xl border border-warning/20 bg-warning/5 p-3 text-xs text-warning/80 flex gap-2">
-              <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-              <span>未配置钱包私钥，扫描正常，启动策略需先在设置页配置</span>
+          {/* ── Running state: big combined widget ── */}
+          {isRunning && selected ? (
+            <div className="rounded-xl border border-success/40 bg-success/5 p-4 space-y-3">
+              {/* Header */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  {/* Ping animation */}
+                  <span className="relative flex h-3 w-3">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-60" />
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-success" />
+                  </span>
+                  <span className="text-sm font-semibold text-success">夹子运行中</span>
+                </div>
+                <span className="text-xs text-text-muted font-mono">${cfg.executionAmountUSD} / 笔</span>
+              </div>
+
+              {/* Target token */}
+              <div className="rounded-lg bg-bg-elevated border border-success/20 p-3">
+                <div className="flex items-center gap-1.5 mb-2">
+                  <Crosshair className="w-3.5 h-3.5 text-success" />
+                  <span className="text-xs text-success font-medium">正在夹击目标</span>
+                </div>
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="font-mono font-bold text-white text-base">{selected.symbol}</div>
+                    <div className="text-xs text-text-muted mt-0.5">{selected.dex}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-xs text-text-muted">流动性</div>
+                    <div className="text-sm font-mono text-white">{formatUSD(selected.liquidity)}</div>
+                  </div>
+                </div>
+                <div className="font-mono text-xs text-text-muted mt-2 break-all leading-relaxed">
+                  {selected.address}
+                </div>
+              </div>
+
+              {/* Mempool feed */}
+              <MempoolFeed />
+
+              {/* Quick stats */}
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <div className="rounded-lg bg-bg-elevated border border-bg-border px-2 py-1.5 text-center">
+                  <div className="text-text-muted mb-0.5">Gas 倍数</div>
+                  <div className="font-mono text-white">{cfg.priorityGasMultiplier}x</div>
+                </div>
+                <div className="rounded-lg bg-bg-elevated border border-bg-border px-2 py-1.5 text-center">
+                  <div className="text-text-muted mb-0.5">滑点</div>
+                  <div className="font-mono text-white">{cfg.slippageTolerance}%</div>
+                </div>
+                <div className="rounded-lg bg-bg-elevated border border-bg-border px-2 py-1.5 text-center">
+                  <div className="text-text-muted mb-0.5">最大并发</div>
+                  <div className="font-mono text-white">{cfg.maxConcurrent}</div>
+                </div>
+              </div>
             </div>
+          ) : (
+            <>
+              {/* Selected token (not running) */}
+              {selected && (
+                <div className="rounded-xl bg-primary-dim border border-primary/30 p-4">
+                  <div className="text-xs text-primary mb-1">已选择目标</div>
+                  <div className="font-mono font-semibold text-white">{selected.symbol}</div>
+                  <div className="text-xs text-text-muted">{selected.dex} · {formatUSD(selected.liquidity)} 流动性</div>
+                  <div className="font-mono text-xs text-text-muted mt-1 break-all">{selected.address}</div>
+                </div>
+              )}
+
+              {/* No wallet warning */}
+              {!config.privateKey && (
+                <div className="rounded-xl border border-warning/20 bg-warning/5 p-3 text-xs text-warning/80 flex gap-2">
+                  <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                  <span>未配置钱包私钥，扫描正常，启动策略需先在设置页配置</span>
+                </div>
+              )}
+            </>
           )}
 
           {/* Strategy parameters */}
@@ -301,22 +415,6 @@ export default function Sandwich() {
               </div>
             </div>
           </div>
-
-          {/* Running status */}
-          {isRunning && (
-            <div className="rounded-xl bg-success/5 border border-success/20 p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="w-2 h-2 rounded-full bg-success animate-pulse" />
-                <span className="text-sm text-success font-medium">夹子运行中</span>
-              </div>
-              <div className="text-xs text-text-muted">正在监听 Mempool，等待夹击机会...</div>
-              <div className="mt-2 text-xs text-text-muted space-y-0.5">
-                <div>执行金额: <span className="text-white">${cfg.executionAmountUSD}</span></div>
-                <div>优先 Gas: <span className="text-white">{cfg.priorityGasMultiplier}x</span></div>
-                <div>最大并发: <span className="text-white">{cfg.maxConcurrent}</span></div>
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </div>
