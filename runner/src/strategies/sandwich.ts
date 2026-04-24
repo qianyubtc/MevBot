@@ -152,16 +152,22 @@ export class SandwichStrategy {
     console.log(chalk.yellow('[Sandwich] 策略已停止'))
   }
 
-  // Probe whether the RPC actually supports mempool subscriptions. Cheapest
-  // test: create a pending-tx filter and immediately drop it. Fails fast with
-  // 403 on public BSC RPCs. We only warn (don't throw) so users on a flaky
-  // RPC can still let the strategy start and see what happens — mempool.ts
-  // will show the one-shot guidance if it really doesn't work.
+  // Probe whether the RPC actually supports mempool subscriptions.
+  //
+  // • HTTP transport: filter-based polling. Test by creating+uninstalling a
+  //   pending-tx filter. Public BSC HTTP RPCs reject with 403 here.
+  // • WSS transport: eth_subscribe. Filter API may not be supported even if
+  //   subscribe works, so the filter probe produces false negatives. Skip it
+  //   and rely on mempool.ts onError to surface real failures.
   private async preflightMempool() {
+    const transport = this.publicClient.transport as any
+    // transport.type === 'webSocket' for wss, 'http' for http
+    if (transport?.type === 'webSocket') {
+      console.log(chalk.dim('[Sandwich] WSS 传输 — 跳过 filter 预检 (使用 eth_subscribe)'))
+      return
+    }
     try {
-      const transport = this.publicClient.transport as any
       const filterId = await transport.request({ method: 'eth_newPendingTransactionFilter' })
-      // Best-effort cleanup; errors ignored
       await transport.request({ method: 'eth_uninstallFilter', params: [filterId] }).catch(() => {})
     } catch (err: any) {
       const msg = String(err?.message ?? err ?? '').toLowerCase()
@@ -176,7 +182,6 @@ export class SandwichStrategy {
           '  • 或付费: QuickNode / NodeReal / GetBlock'
         )
       }
-      // Unknown error — don't block; let mempool.ts handle it downstream.
       console.warn(chalk.yellow(`[Sandwich] mempool 预检异常 (继续启动): ${msg.slice(0, 100)}`))
     }
   }

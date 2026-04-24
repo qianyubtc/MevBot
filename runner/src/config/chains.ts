@@ -1,4 +1,4 @@
-import { createPublicClient, createWalletClient, http, type Chain } from 'viem'
+import { createPublicClient, createWalletClient, http, webSocket, type Chain, type Transport } from 'viem'
 import { bsc, mainnet, arbitrum, base } from 'viem/chains'
 import { privateKeyToAccount } from 'viem/accounts'
 
@@ -21,9 +21,15 @@ export const DEX_FACTORIES: Record<string, Record<string, `0x${string}`>> = {
   },
 }
 
+// Pick transport based on URL scheme. Passing a wss:// URL to http() causes
+// "fetch failed" because viem tries to POST to it. WSS is strongly preferred
+// for sandwich strategy (eth_subscribe doesn't expire like HTTP filters).
 export function buildClients(rpcUrl: string, privateKey: string, chainName: string, timeoutMs = 20000) {
   const chain = CHAINS[chainName] ?? bsc
-  const transport = http(rpcUrl, { timeout: timeoutMs })
+  const isWss = /^wss?:\/\//i.test(rpcUrl)
+  const transport: Transport = isWss
+    ? webSocket(rpcUrl, { timeout: timeoutMs, reconnect: { attempts: 5, delay: 1000 } })
+    : http(rpcUrl, { timeout: timeoutMs })
 
   const publicClient = createPublicClient({ chain, transport, batch: { multicall: true } })
   const account = privateKeyToAccount(privateKey as `0x${string}`)
