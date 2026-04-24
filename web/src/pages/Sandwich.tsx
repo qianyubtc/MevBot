@@ -16,7 +16,7 @@ function MempoolFeed() {
       const hash = '0x' + Array.from({ length: 8 }, () =>
         Math.floor(Math.random() * 16).toString(16)
       ).join('') + '…'
-      const bnb = (Math.random() * 80 + 0.5).toFixed(2)
+      const bnb = (Math.random() * 20 + 0.05).toFixed(3)
       const id = ++counter.current
       setLines(prev => [{ id, hash, bnb, fresh: true }, ...prev].slice(0, 5))
       // Un-highlight after one tick
@@ -60,12 +60,19 @@ function MempoolFeed() {
 }
 
 export default function Sandwich() {
-  const { activeStrategies, strategyConfig, updateStrategyConfig, tokens, config, runnerConnected, lastTokensAt, setTokens } = useStore()
+  const {
+    activeStrategies, strategyConfig, updateStrategyConfig,
+    tokens, config, runnerConnected, lastTokensAt, setTokens,
+    sandwichSelectedToken, setSandwichSelectedToken,
+  } = useStore()
   const isRunning = activeStrategies['sandwich'] ?? false
   const cfg = strategyConfig.sandwich
   const tokenList: Token[] = tokens['sandwich'] ?? []
 
-  const [selected, setSelected] = useState<Token | null>(null)
+  // Use store-persisted selected so it survives page navigation
+  const selected = sandwichSelectedToken
+  const setSelected = (token: Token | null) => setSandwichSelectedToken(token)
+
   const [scanning, setScanning] = useState(false)
   const [caInput, setCaInput] = useState('')
   const [caLoading, setCaLoading] = useState(false)
@@ -94,19 +101,17 @@ export default function Sandwich() {
         if (!exists) {
           useStore.getState().setTokens('sandwich', [token, ...current])
         }
-        setSelected(token)
+        useStore.getState().setSandwichSelectedToken(token)
         setCaInput('')
       }
 
       if (msg.type === 'error') {
         if (caLoadingRef.current) {
-          // Error during CA lookup
           caLoadingRef.current = false
           setCaLoading(false)
           if (caTimeoutRef.current) clearTimeout(caTimeoutRef.current)
           setCaError(msg.payload.message)
         } else {
-          // General error (e.g. balance insufficient when starting)
           setStartError(msg.payload.message)
         }
       }
@@ -158,13 +163,13 @@ export default function Sandwich() {
   }
 
   const sliderParams = [
-    { label: '最小利润 (USD)',      key: 'minProfitUSD',          min: 1,    max: 200,    step: 1,    unit: '$' },
-    { label: '执行金额 (USD)',       key: 'executionAmountUSD',    min: 10,   max: 5000,   step: 10,   unit: '$' },
-    { label: '最大 Gas (Gwei)',      key: 'maxGasGwei',            min: 1,    max: 100,    step: 1,    unit: 'Gwei' },
-    { label: '优先 Gas 倍数',        key: 'priorityGasMultiplier', min: 1,    max: 10,     step: 0.5,  unit: 'x' },
-    { label: '滑点容忍 (%)',         key: 'slippageTolerance',     min: 0.1,  max: 5,      step: 0.1,  unit: '%' },
-    { label: '最小流动性 (USD)',     key: 'minLiquidityUSD',       min: 10000,max: 2000000,step: 10000,unit: '$' },
-    { label: '最大并发夹',           key: 'maxConcurrent',         min: 1,    max: 10,     step: 1,    unit: '' },
+    { label: '最小利润 (USD)',        key: 'minProfitUSD',          min: 0.1,  max: 50,     step: 0.1,  unit: '$' },
+    { label: '执行金额 (USD)',         key: 'executionAmountUSD',    min: 10,   max: 5000,   step: 10,   unit: '$' },
+    { label: '最大 Gas (Gwei)',        key: 'maxGasGwei',            min: 1,    max: 100,    step: 1,    unit: 'Gwei' },
+    { label: '前跑 Gas 溢价 (Gwei)',   key: 'priorityGasMultiplier', min: 0.5,  max: 5,      step: 0.5,  unit: 'Gwei' },
+    { label: '滑点容忍 (%)',           key: 'slippageTolerance',     min: 0.1,  max: 5,      step: 0.1,  unit: '%' },
+    { label: '最小流动性 (USD)',       key: 'minLiquidityUSD',       min: 10000,max: 2000000,step: 10000,unit: '$' },
+    { label: '最大并发夹',             key: 'maxConcurrent',         min: 1,    max: 10,     step: 1,    unit: '' },
   ] as const
 
   return (
@@ -377,7 +382,9 @@ export default function Sandwich() {
                     <span className="font-mono text-white">
                       {key === 'minLiquidityUSD' || key === 'executionAmountUSD'
                         ? `$${val >= 1000 ? (val / 1000).toFixed(0) + 'K' : val}`
-                        : `${val}${unit}`}
+                        : key === 'minProfitUSD'
+                          ? `$${val}`
+                          : `${val}${unit}`}
                     </span>
                   </div>
                   <input

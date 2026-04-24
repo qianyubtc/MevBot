@@ -148,16 +148,17 @@ export class SandwichStrategy {
 
     // ── 2. Victim BNB amount ───────────────────────────────────────────────
     const victimBNB = Number(formatEther(swap.amountIn))
-    const MIN_VICTIM_BNB = 1.5   // victim must spend ≥ 1.5 BNB (~$870) to create impact
+    // Low floor — let AMM math + minProfitUSD filter unprofitable ops
+    const MIN_VICTIM_BNB = 0.05   // ≥ $29 victim; very small ones won't clear minProfitUSD anyway
     if (victimBNB < MIN_VICTIM_BNB) return
 
     // ── 3. Gas price check ────────────────────────────────────────────────
     const victimGasPriceGwei = Number(swap.gasPrice) / 1e9
     if (victimGasPriceGwei > this.config.maxGasGwei) return
 
-    // Front-run: victim + 1.5 Gwei | Back-run: victim gas (same priority tier)
-    const FRONT_PREMIUM_GWEI = 1.5
-    const frontGasWei  = swap.gasPrice + parseUnits(FRONT_PREMIUM_GWEI.toFixed(9), 9)
+    // Front-run: victim + configurable Gwei premium | Back-run: victim gas
+    const frontPremiumGwei = this.config.priorityGasMultiplier ?? 1.5  // now used as Gwei, not multiplier
+    const frontGasWei  = swap.gasPrice + parseUnits(frontPremiumGwei.toFixed(9), 9)
     const backGasWei   = swap.gasPrice
 
     // ── 4. Realistic gas cost: 2 swaps (frontrun + backrun), approve is pre-done

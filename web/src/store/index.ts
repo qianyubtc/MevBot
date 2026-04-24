@@ -66,6 +66,7 @@ interface AppState {
   strategyConfig: StrategyConfig
   lastTokensAt: number
   walletBalance: number | null
+  sandwichSelectedToken: Token | null
   setRunnerConnected: (v: boolean) => void
   setStrategyRunning: (strategy: string, running: boolean) => void
   setPnL: (pnl: PnLSnapshot) => void
@@ -79,6 +80,7 @@ interface AppState {
     strategy: K,
     patch: Partial<StrategyConfig[K]>
   ) => void
+  setSandwichSelectedToken: (token: Token | null) => void
 }
 
 const defaultConfig: Config = {
@@ -143,6 +145,7 @@ export const useStore = create<AppState>()(
       tokens: {},
       lastTokensAt: 0,
       walletBalance: null,
+      sandwichSelectedToken: null,
       config: defaultConfig,
       strategyConfig: defaultStrategyConfig,
 
@@ -157,6 +160,7 @@ export const useStore = create<AppState>()(
       setTokens: (strategy, tokens) =>
         set((s) => ({ tokens: { ...s.tokens, [strategy]: tokens }, lastTokensAt: Date.now() })),
       setWalletBalance: (v) => set({ walletBalance: v }),
+      setSandwichSelectedToken: (token) => set({ sandwichSelectedToken: token }),
       resetLocalData: () => set({ trades: [], opportunities: [], pnl: null }),
       updateConfig: (patch) =>
         set((s) => ({ config: { ...s.config, ...patch } })),
@@ -170,7 +174,7 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'mevbot-store',
-      partialize: (s) => ({ config: s.config, strategyConfig: s.strategyConfig }),
+      partialize: (s) => ({ config: s.config, strategyConfig: s.strategyConfig, sandwichSelectedToken: s.sandwichSelectedToken }),
     }
   )
 )
