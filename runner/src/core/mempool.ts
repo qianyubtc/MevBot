@@ -27,20 +27,31 @@ const SWAP_SIGNATURES = [SIG_ETH_FOR_TOKENS, SIG_TOKENS_FOR_ETH, SIG_TOKENS_FOR_
 
 // Classify RPC errors so we can give users actionable guidance instead of
 // dumping raw viem stack traces.
-function classifyRpcError(err: any): { unsupported: boolean; short: string } {
+function classifyRpcError(err: any): {
+  unsupported: boolean
+  filterExpired: boolean
+  short: string
+} {
   const raw = String(err?.message ?? err ?? '').toLowerCase()
   const status = err?.status ?? err?.cause?.status
-  const unsupported =
-    status === 403 || status === 405 ||
-    raw.includes('forbidden') ||
-    raw.includes('method not found') ||
-    raw.includes('method not supported') ||
-    raw.includes('does not exist') ||
+  // "filter not found" means the RPC evicted our polling filter (most HTTP
+  // RPCs expire idle filters after ~5min or even ~5s under memory pressure).
+  // This is recoverable — we just need a fresh filter.
+  const filterExpired =
     raw.includes('filter not found') ||
-    raw.includes('not available')
-  // Keep only the first line, strip URL/body noise
+    raw.includes('filter id') ||
+    raw.includes('invalid filter')
+  const unsupported =
+    !filterExpired && (
+      status === 403 || status === 405 ||
+      raw.includes('forbidden') ||
+      raw.includes('method not found') ||
+      raw.includes('method not supported') ||
+      raw.includes('does not exist') ||
+      raw.includes('not available')
+    )
   const short = String(err?.shortMessage ?? err?.message ?? err ?? '').split('\n')[0].slice(0, 180)
-  return { unsupported, short }
+  return { unsupported, filterExpired, short }
 }
 
 export class MempoolMonitor {
@@ -51,6 +62,10 @@ export class MempoolMonitor {
   private errorCount = 0
   private lastErrorLogAt = 0
   private guidanceShown = false
+  private wssGuidanceShown = false
+  private activeUnwatch?: () => void
+  private reconnectTimer?: NodeJS.Timeout
+  private reconnectAttempt = 0
 
   constructor(client: PublicClient, routerAddresses: string[]) {
     this.client = client
@@ -76,19 +91,52 @@ export class MempoolMonitor {
     ))
   }
 
+  // Print WSS-migration hint once: recurring filter expirations mean the user
+  // is on an HTTP RPC that evicts filters aggressively. WSS (eth_subscribe)
+  // avoids the filter mechanism entirely and is strictly better.
+  private showWssGuidance() {
+    if (this.wssGuidanceShown) return
+    this.wssGuidanceShown = true
+    console.warn(chalk.yellow(
+      '[Mempool] ⚠ RPC 频繁丢弃 pending-tx filter — 这是 HTTP 轮询模式的固有问题。\n' +
+      '           强烈建议切换到 WSS (eth_subscribe 不会过期):\n' +
+      '             • wss://bsc-rpc.publicnode.com\n' +
+      '             • wss://bsc.callstaticrpc.com\n' +
+      '           已启用自动重建 filter，但延迟/漏单会增加。'
+    ))
+  }
+
   async start() {
     this.running = true
     this.errorCount = 0
     this.guidanceShown = false
+    this.wssGuidanceShown = false
+    this.reconnectAttempt = 0
     console.log(chalk.cyan('[Mempool] 开始监听待处理交易...'))
 
+    this.attachWatcher()
+
+    return () => {
+      this.running = false
+      if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = undefined }
+      this.activeUnwatch?.()
+      this.activeUnwatch = undefined
+    }
+  }
+
+  // Create a fresh pending-tx subscription. Called on start and after any
+  // recoverable error (filter expired, transient network blip).
+  private attachWatcher() {
+    if (!this.running) return
+
     try {
-      const unwatch = this.client.watchPendingTransactions({
+      this.activeUnwatch = this.client.watchPendingTransactions({
         onTransactions: async (hashes) => {
           if (!this.running) return
-          // Fetch all hashes in parallel. Old code did `hashes.slice(0, 10)` in
-          // a sequential loop which (a) silently dropped swaps under load and
-          // (b) serialized RPC roundtrips into an artificial latency bottleneck.
+          // Reset the reconnect counter — we just got live data, everything's fine.
+          this.reconnectAttempt = 0
+          // Parallel fetch; old code had hashes.slice(0, 10) + sequential await
+          // which silently dropped swaps under load.
           await Promise.all(hashes.map(async (hash) => {
             if (!this.running) return
             try {
@@ -103,20 +151,33 @@ export class MempoolMonitor {
             } catch {}
           }))
         },
-        // viem's subscription swallows async errors — without this callback
-        // a dropped/unsupported node silently stops delivering forever.
-        // We detect "unsupported" on the first error and print one-shot
-        // guidance; transient errors get throttled to ≤1 log per 30s so
-        // the log panel doesn't get flooded.
+        // viem swallows async errors from the polling loop — without this we'd
+        // silently stop receiving txs when the filter expires or the node blips.
         onError: (err) => {
           this.errorCount++
-          const { unsupported, short } = classifyRpcError(err)
+          const { unsupported, filterExpired, short } = classifyRpcError(err)
 
           if (unsupported) {
             this.showRpcGuidance()
+            return  // no point retrying on 403
+          }
+
+          if (filterExpired) {
+            // RPC dropped our filter. Tear down the dead watcher and create a
+            // new one. This is common on 48.club / free HTTP RPCs. After a few
+            // recurrences we nudge the user toward WSS.
+            if (this.reconnectAttempt >= 2) this.showWssGuidance()
+            this.reconnectAttempt++
+            this.activeUnwatch?.()
+            this.activeUnwatch = undefined
+            // Small backoff so we don't hammer the RPC if it's actually down.
+            // 500ms → 1s → 2s → 4s capped at 5s.
+            const delay = Math.min(500 * 2 ** (this.reconnectAttempt - 1), 5000)
+            this.reconnectTimer = setTimeout(() => this.attachWatcher(), delay)
             return
           }
 
+          // Unknown transient error — throttle logs to ≤1 per 30s.
           const now = Date.now()
           if (now - this.lastErrorLogAt > 30_000) {
             this.lastErrorLogAt = now
@@ -127,16 +188,10 @@ export class MempoolMonitor {
           }
         },
       })
-
-      return () => {
-        this.running = false
-        unwatch()
-      }
     } catch (e: any) {
       const { unsupported, short } = classifyRpcError(e)
       if (unsupported) this.showRpcGuidance()
       else console.error(chalk.red(`[Mempool] 订阅启动失败: ${short}`))
-      return this.startPolling()
     }
   }
 
