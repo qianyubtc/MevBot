@@ -163,34 +163,36 @@ export class SandwichStrategy {
       9
     )
 
+    // Track whether front-run tx was actually submitted (to decide if we log a failed trade)
+    let frontRunSubmitted = false
+
     try {
       // ── Step 1: Front-run buy (BNB → Token) ─────────────────────────
-      console.log(chalk.dim(`[Sandwich] Front-run buy: ${buyAmountUSD}$ BNB → ${this.config.token.symbol}`))
+      console.log(chalk.dim(`[Sandwich] ① 前跑买入: $${buyAmountUSD} BNB → ${this.config.token.symbol} | gas ${(victimGasGwei * (this.config.priorityGasMultiplier ?? 2)).toFixed(2)} Gwei`))
       const frontRunHash = await this.walletClient.writeContract({
         address: routerAddress,
         abi: ROUTER_ABI,
         functionName: 'swapExactETHForTokens',
         args: [
-          0n,                            // amountOutMin = 0 (we take whatever we get)
-          [WBNB, tokenAddress],          // path
-          account.address,               // to
+          0n,
+          [WBNB, tokenAddress],
+          account.address,
           deadline,
         ],
         value: buyAmountBNB,
-        gasPrice: priorityGasWei,        // outbid victim
-        account: account.address,
+        gasPrice: priorityGasWei,
+        account,        // ← full Account object, not just address string
         chain: null,
       })
-
-      console.log(chalk.dim(`[Sandwich] Front-run hash: ${frontRunHash}`))
+      frontRunSubmitted = true
+      console.log(chalk.dim(`[Sandwich] ① 前跑已提交: ${frontRunHash}`))
 
       // ── Step 2: Wait for front-run confirmation ──────────────────────
       const frontReceipt = await this.publicClient.waitForTransactionReceipt({
         hash: frontRunHash,
         timeout: 30_000,
       })
-
-      if (frontReceipt.status !== 'success') throw new Error('Front-run tx reverted')
+      if (frontReceipt.status !== 'success') throw new Error('前跑买入被链上回滚')
 
       // ── Step 3: Wait briefly for victim tx to land ──────────────────
       await new Promise((r) => setTimeout(r, 200))
@@ -202,8 +204,7 @@ export class SandwichStrategy {
         functionName: 'balanceOf',
         args: [account.address],
       })
-
-      if (tokenBalance === 0n) throw new Error('No token received from front-run')
+      if (tokenBalance === 0n) throw new Error('前跑后未收到代币，受害者交易可能未上链')
 
       // ── Step 5: Approve router to spend tokens ───────────────────────
       const approveHash = await this.walletClient.writeContract({
@@ -212,26 +213,26 @@ export class SandwichStrategy {
         functionName: 'approve',
         args: [routerAddress, tokenBalance],
         gasPrice: priorityGasWei,
-        account: account.address,
+        account,        // ← full Account object
         chain: null,
       })
       await this.publicClient.waitForTransactionReceipt({ hash: approveHash, timeout: 30_000 })
 
       // ── Step 6: Back-run sell (Token → BNB) ─────────────────────────
-      console.log(chalk.dim(`[Sandwich] Back-run sell: ${this.config.token.symbol} → BNB`))
+      console.log(chalk.dim(`[Sandwich] ② 后跑卖出: ${this.config.token.symbol} → BNB`))
       const backRunHash = await this.walletClient.writeContract({
         address: routerAddress,
         abi: ROUTER_ABI,
         functionName: 'swapExactTokensForETH',
         args: [
           tokenBalance,
-          0n,                             // amountOutMin = 0
+          0n,
           [tokenAddress, WBNB],
           account.address,
           deadline,
         ],
         gasPrice: priorityGasWei,
-        account: account.address,
+        account,        // ← full Account object
         chain: null,
       })
 
@@ -239,15 +240,14 @@ export class SandwichStrategy {
         hash: backRunHash,
         timeout: 30_000,
       })
-
-      if (backReceipt.status !== 'success') throw new Error('Back-run tx reverted')
+      if (backReceipt.status !== 'success') throw new Error('后跑卖出被链上回滚')
 
       // ── Step 7: Record real trade ────────────────────────────────────
       const trade = {
         id,
         strategy: 'sandwich',
         token: this.config.token.symbol,
-        txHash: backRunHash,              // use back-run as the settlement hash
+        txHash: backRunHash,
         chain: 'BSC',
         profitUSD: estimatedProfitUSD,
         gasUSD,
@@ -256,13 +256,23 @@ export class SandwichStrategy {
       }
       saveTrade(trade)
       this.ws.broadcast({ type: 'trade', payload: trade })
-      console.log(chalk.green(`[Sandwich] 夹子成功! 预估利润 $${estimatedProfitUSD.toFixed(2)} | tx: ${backRunHash}`))
+      console.log(chalk.green(`[Sandwich] ✓ 夹子完成! 预估利润 $${estimatedProfitUSD.toFixed(2)} | ${backRunHash}`))
 
     } catch (err: any) {
-      console.error(chalk.red('[Sandwich] 执行失败:'), err.message)
-      // Only record failed trade if we actually sent the front-run tx
-      // (to avoid recording for estimation/filter failures)
-      if (err.message !== 'No token received from front-run' && !err.message.includes('insufficient')) {
+      // Extract a clean error message — strip the giant viem hex dump
+      const raw: string = err.shortMessage ?? err.message ?? String(err)
+      const clean = raw
+        .split('\n')[0]                         // first line only
+        .replace(/\s*URL:.*/, '')               // drop URL: https://...
+        .replace(/\s*Request body:.*/, '')      // drop Request body: {...}
+        .replace(/\s*Version:.*/, '')           // drop Version: viem@x.x.x
+        .trim()
+        .slice(0, 120)                          // max 120 chars
+
+      console.error(chalk.red(`[Sandwich] ✗ 执行失败: ${clean}`))
+
+      // Only record a failed trade if the front-run was actually submitted on-chain
+      if (frontRunSubmitted) {
         const trade = {
           id,
           strategy: 'sandwich',
