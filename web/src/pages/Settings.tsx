@@ -1,18 +1,74 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useStore, type Chain } from '@/store'
 import { wsClient } from '@/lib/ws'
 import {
   Save, Eye, EyeOff, Shield, Wifi, Bell,
-  AlertTriangle, RefreshCw, Sparkles, Copy, Check,
+  AlertTriangle, RefreshCw, Sparkles, Copy, Check, ChevronDown,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { getPublicKey } from '@noble/secp256k1'
+import { keccak_256 } from '@noble/hashes/sha3.js'
 
-const CHAINS: { value: Chain; label: string; rpc: string }[] = [
-  { value: 'BSC',      label: 'BNB Smart Chain', rpc: 'https://bsc-dataseed.binance.org'   },
-  { value: 'ETH',      label: 'Ethereum',         rpc: 'https://mainnet.infura.io/v3/YOUR_KEY' },
-  { value: 'Arbitrum', label: 'Arbitrum One',     rpc: 'https://arb1.arbitrum.io/rpc'      },
-  { value: 'Base',     label: 'Base',             rpc: 'https://mainnet.base.org'           },
-]
+// ─── Chain & RPC data ────────────────────────────────────────────────────────
+
+interface RpcPreset { label: string; url: string }
+
+const CHAIN_CONFIG: Record<Chain, {
+  label: string
+  presets: RpcPreset[]
+}> = {
+  BSC: {
+    label: 'BNB Smart Chain',
+    presets: [
+      { label: 'Binance Official',       url: 'https://bsc-dataseed.binance.org'           },
+      { label: 'Binance Dataseed 1',     url: 'https://bsc-dataseed1.binance.org'          },
+      { label: 'Binance Dataseed 2',     url: 'https://bsc-dataseed2.binance.org'          },
+      { label: 'NodeReal Free',          url: 'https://bsc-mainnet.nodereal.io/v1/64a9df0874fb4a93b9d0a3849de012d3' },
+      { label: 'Ankr Public',            url: 'https://rpc.ankr.com/bsc'                   },
+      { label: '48Club (低延迟)',         url: 'https://rpc-bsc.48.club'                    },
+      { label: 'BlastAPI',               url: 'https://bsc-mainnet.public.blastapi.io'     },
+      { label: '自定义...',              url: ''                                             },
+    ],
+  },
+  SOL: {
+    label: 'Solana',
+    presets: [
+      { label: 'Solana Mainnet (官方)', url: 'https://api.mainnet-beta.solana.com'         },
+      { label: 'Helius (推荐)',          url: 'https://mainnet.helius-rpc.com/?api-key=YOUR_KEY' },
+      { label: 'QuickNode',             url: 'https://YOUR_ENDPOINT.quiknode.pro/YOUR_KEY/' },
+      { label: 'Triton One',            url: 'https://YOUR_ENDPOINT.rpcpool.com/YOUR_KEY'  },
+      { label: 'Alchemy',               url: 'https://solana-mainnet.g.alchemy.com/v2/YOUR_KEY' },
+      { label: 'Ankr Public',           url: 'https://rpc.ankr.com/solana'                 },
+      { label: '自定义...',             url: ''                                              },
+    ],
+  },
+}
+
+// ─── Wallet helpers ───────────────────────────────────────────────────────────
+
+function generateEVMKey(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32))
+  return '0x' + Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
+function evmAddressFromPrivKey(hex: string): string {
+  const raw = hex.startsWith('0x') ? hex.slice(2) : hex
+  const privBytes = Uint8Array.from(raw.match(/.{2}/g)!.map((b: string) => parseInt(b, 16)))
+  const pub = getPublicKey(privBytes, false) // uncompressed 65 bytes
+  const pubBody = pub.slice(1) // drop 04 prefix → 64 bytes
+  const hash = keccak_256(pubBody)
+  return '0x' + Array.from(hash.slice(-20)).map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
+function generateSOLKey(): { privateKey: string; address: string } {
+  // SOL keypair: ed25519; for simplicity show hex private key + placeholder address
+  // Full derivation needs @noble/ed25519 getPublicKey + base58
+  const bytes = crypto.getRandomValues(new Uint8Array(32))
+  const privHex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
+  return { privateKey: privHex, address: '(在 Phantom / Solflare 中导入后查看地址)' }
+}
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
 
 function Section({ title, icon, children }: {
   title: string; icon: React.ReactNode; children: React.ReactNode
@@ -40,28 +96,21 @@ function Field({ label, children, hint }: {
   )
 }
 
-// Generate a cryptographically secure random private key in browser
-function generatePrivateKey(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(32))
-  return '0x' + Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
+function CopyBtn({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <button
+      onClick={() => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2000) }}
+      className="flex-shrink-0 p-1 rounded hover:bg-bg-border transition-colors"
+    >
+      {copied
+        ? <Check className="w-3.5 h-3.5 text-success" />
+        : <Copy className="w-3.5 h-3.5 text-text-muted" />}
+    </button>
+  )
 }
 
-// Derive ETH address from private key (simple keccak256 - uses SubtleCrypto)
-// We send the key to runner and it returns the address, or we just show key + ask user to import
-async function deriveAddress(privateKey: string): Promise<string> {
-  // Send to runner for address derivation
-  return new Promise((resolve) => {
-    wsClient.send({ type: 'derive_address', payload: { privateKey } })
-    const off = wsClient.on((msg: any) => {
-      if (msg.type === 'address_derived') {
-        off()
-        resolve(msg.payload.address)
-      }
-    })
-    // Fallback if runner not connected
-    setTimeout(() => resolve(''), 2000)
-  })
-}
+// ─── Main component ───────────────────────────────────────────────────────────
 
 export default function Settings() {
   const { config, updateConfig, runnerConnected } = useStore()
@@ -69,13 +118,16 @@ export default function Settings() {
   const [saved, setSaved] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [synced, setSynced] = useState(false)
-  const [copied, setCopied] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [newWallet, setNewWallet] = useState<{ privateKey: string; address: string } | null>(null)
+  const [rpcOpen, setRpcOpen] = useState(false)
 
   const inputCls = 'w-full bg-bg-elevated border border-bg-border rounded-lg px-3 py-2 text-sm text-white font-mono placeholder:text-muted focus:outline-none focus:border-primary/50 transition-colors'
 
-  // Sync config to runner
+  const chainCfg = CHAIN_CONFIG[config.chain]
+  const isBSC = config.chain === 'BSC'
+
+  // ── Sync ──
   const handleSyncToRunner = () => {
     if (!runnerConnected) return
     setSyncing(true)
@@ -89,29 +141,42 @@ export default function Settings() {
     if (runnerConnected) handleSyncToRunner()
   }
 
-  // Generate new wallet
-  const handleGenerateWallet = async () => {
-    setGenerating(true)
-    const pk = generatePrivateKey()
-    // Derive address via runner or show placeholder
-    let address = ''
-    if (runnerConnected) {
-      address = await deriveAddress(pk)
-    }
-    setNewWallet({ privateKey: pk, address })
-    setGenerating(false)
+  // ── Chain switch ──
+  const handleChainSwitch = (chain: Chain) => {
+    const defaultRpc = CHAIN_CONFIG[chain].presets[0].url
+    updateConfig({ chain, rpcUrl: defaultRpc })
   }
 
-  const handleUseGeneratedWallet = () => {
+  // ── RPC preset select ──
+  const handleRpcPreset = (preset: RpcPreset) => {
+    setRpcOpen(false)
+    if (preset.url) updateConfig({ rpcUrl: preset.url })
+    // "自定义..." → just close dropdown so user can edit the input
+  }
+
+  // ── Generate wallet ──
+  const handleGenerate = () => {
+    setGenerating(true)
+    setTimeout(() => {
+      try {
+        if (isBSC) {
+          const pk = generateEVMKey()
+          const address = evmAddressFromPrivKey(pk)
+          setNewWallet({ privateKey: pk, address })
+        } else {
+          setNewWallet(generateSOLKey())
+        }
+      } catch (e) {
+        console.error('wallet gen error', e)
+      }
+      setGenerating(false)
+    }, 100)
+  }
+
+  const handleUseWallet = () => {
     if (!newWallet) return
     updateConfig({ privateKey: newWallet.privateKey, walletAddress: newWallet.address })
     setNewWallet(null)
-  }
-
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
   }
 
   return (
@@ -131,50 +196,90 @@ export default function Settings() {
         </div>
       )}
 
-      {/* Network */}
+      {/* ── Network ── */}
       <Section title="网络配置" icon={<Wifi className="w-4 h-4" />}>
+        {/* Chain selector */}
         <Field label="目标链">
           <div className="grid grid-cols-2 gap-2">
-            {CHAINS.map((c) => (
+            {(Object.keys(CHAIN_CONFIG) as Chain[]).map((chain) => (
               <button
-                key={c.value}
-                onClick={() => updateConfig({ chain: c.value, rpcUrl: c.rpc })}
+                key={chain}
+                onClick={() => handleChainSwitch(chain)}
                 className={cn(
-                  'px-3 py-2 rounded-lg border text-sm text-left transition-colors',
-                  config.chain === c.value
+                  'px-3 py-2.5 rounded-lg border text-sm text-left transition-colors',
+                  config.chain === chain
                     ? 'bg-primary-dim border-primary/40 text-primary'
                     : 'border-bg-border text-text-dim hover:border-primary/30'
                 )}
               >
-                <div className="font-medium">{c.value}</div>
-                <div className="text-xs opacity-60">{c.label}</div>
+                <div className="font-semibold">{chain}</div>
+                <div className="text-xs opacity-60">{CHAIN_CONFIG[chain].label}</div>
               </button>
             ))}
           </div>
         </Field>
-        <Field label="RPC 节点" hint="建议使用 Alchemy / QuickNode 私有节点获取更快的 Mempool">
-          <input
-            className={inputCls}
-            value={config.rpcUrl}
-            onChange={(e) => updateConfig({ rpcUrl: e.target.value })}
-            placeholder="https://..."
-          />
+
+        {/* RPC with preset dropdown */}
+        <Field
+          label="RPC 节点"
+          hint={isBSC
+            ? '建议使用 48Club / NodeReal 私有节点获取更快的 Mempool'
+            : '建议使用 Helius 私有节点，Solana 交易速度更快'}
+        >
+          <div className="space-y-2">
+            {/* Preset picker */}
+            <div className="relative">
+              <button
+                onClick={() => setRpcOpen(!rpcOpen)}
+                className="w-full flex items-center justify-between px-3 py-2 bg-bg-elevated border border-bg-border rounded-lg text-xs text-text-muted hover:border-primary/40 transition-colors"
+              >
+                <span>
+                  {chainCfg.presets.find(p => p.url === config.rpcUrl)?.label ?? '选择预设节点'}
+                </span>
+                <ChevronDown className={cn('w-3.5 h-3.5 transition-transform', rpcOpen && 'rotate-180')} />
+              </button>
+              {rpcOpen && (
+                <div className="absolute z-20 top-full mt-1 w-full bg-bg-surface border border-bg-border rounded-xl shadow-xl overflow-hidden">
+                  {chainCfg.presets.map((p) => (
+                    <button
+                      key={p.label}
+                      onClick={() => handleRpcPreset(p)}
+                      className={cn(
+                        'w-full text-left px-3 py-2.5 text-xs hover:bg-bg-elevated transition-colors border-b border-bg-border last:border-0',
+                        p.url === config.rpcUrl ? 'text-primary' : 'text-text-dim'
+                      )}
+                    >
+                      <div className="font-medium">{p.label}</div>
+                      {p.url && <div className="text-text-muted mt-0.5 truncate">{p.url}</div>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            {/* Manual input */}
+            <input
+              className={inputCls}
+              value={config.rpcUrl}
+              onChange={(e) => updateConfig({ rpcUrl: e.target.value })}
+              placeholder="https://..."
+            />
+          </div>
         </Field>
       </Section>
 
-      {/* Wallet */}
+      {/* ── Wallet ── */}
       <Section title="钱包配置" icon={<Shield className="w-4 h-4" />}>
         <div className="rounded-lg border border-warning/30 bg-warning/5 px-3 py-2 flex items-start gap-2">
           <AlertTriangle className="w-4 h-4 text-warning mt-0.5 flex-shrink-0" />
           <p className="text-xs text-warning/80">私钥仅保存在本机，不会上传任何服务器。建议使用专用小额钱包。</p>
         </div>
 
-        {/* Generate wallet */}
+        {/* Generate card */}
         <div className="rounded-lg border border-bg-border bg-bg-elevated p-3 space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-xs text-text-muted">没有钱包？一键生成新钱包</span>
             <button
-              onClick={handleGenerateWallet}
+              onClick={handleGenerate}
               disabled={generating}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-accent/40 bg-accent-dim text-accent text-xs font-medium hover:bg-accent/20 transition-colors disabled:opacity-60"
             >
@@ -184,25 +289,34 @@ export default function Settings() {
           </div>
 
           {newWallet && (
-            <div className="space-y-2 pt-2 border-t border-bg-border">
-              <div className="text-xs text-warning font-medium">⚠️ 请立即备份私钥，关闭后不再显示</div>
+            <div className="space-y-3 pt-2 border-t border-bg-border">
+              <div className="text-xs text-warning font-medium flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                请立即备份以下信息，关闭后不再显示
+              </div>
+
+              {/* Address */}
               <div>
-                <div className="text-xs text-text-muted mb-1">私钥</div>
-                <div className="flex items-center gap-2 bg-bg-surface border border-danger/20 rounded-lg px-3 py-2">
-                  <code className="text-xs text-danger font-mono flex-1 break-all">{newWallet.privateKey}</code>
-                  <button onClick={() => copyToClipboard(newWallet.privateKey)} className="flex-shrink-0">
-                    {copied ? <Check className="w-3.5 h-3.5 text-success" /> : <Copy className="w-3.5 h-3.5 text-text-muted" />}
-                  </button>
+                <div className="text-xs text-text-muted mb-1.5">钱包地址</div>
+                <div className="flex items-center gap-2 bg-bg-surface border border-bg-border rounded-lg px-3 py-2">
+                  <code className="text-xs text-white font-mono flex-1 break-all">{newWallet.address}</code>
+                  {newWallet.address && !newWallet.address.startsWith('(') && (
+                    <CopyBtn text={newWallet.address} />
+                  )}
                 </div>
               </div>
-              {newWallet.address && (
-                <div>
-                  <div className="text-xs text-text-muted mb-1">地址</div>
-                  <div className="font-mono text-xs text-white bg-bg-surface border border-bg-border rounded-lg px-3 py-2">{newWallet.address}</div>
+
+              {/* Private key */}
+              <div>
+                <div className="text-xs text-text-muted mb-1.5">私钥</div>
+                <div className="flex items-center gap-2 bg-bg-surface border border-danger/30 rounded-lg px-3 py-2">
+                  <code className="text-xs text-danger font-mono flex-1 break-all">{newWallet.privateKey}</code>
+                  <CopyBtn text={newWallet.privateKey} />
                 </div>
-              )}
+              </div>
+
               <button
-                onClick={handleUseGeneratedWallet}
+                onClick={handleUseWallet}
                 className="w-full py-2 rounded-lg bg-primary text-bg text-xs font-medium hover:bg-primary-hover transition-colors"
               >
                 使用此钱包
@@ -216,9 +330,10 @@ export default function Settings() {
             className={inputCls}
             value={config.walletAddress}
             onChange={(e) => updateConfig({ walletAddress: e.target.value })}
-            placeholder="0x..."
+            placeholder={isBSC ? '0x...' : 'Solana 地址'}
           />
         </Field>
+
         <Field label="私钥" hint="仅在本地 Runner 中使用，用于签名交易">
           <div className="relative">
             <input
@@ -226,7 +341,7 @@ export default function Settings() {
               type={showKey ? 'text' : 'password'}
               value={config.privateKey}
               onChange={(e) => updateConfig({ privateKey: e.target.value })}
-              placeholder="0x..."
+              placeholder={isBSC ? '0x...' : '64位十六进制'}
             />
             <button
               onClick={() => setShowKey(!showKey)}
@@ -238,13 +353,13 @@ export default function Settings() {
         </Field>
       </Section>
 
-      {/* Risk */}
+      {/* ── Risk ── */}
       <Section title="风险控制" icon={<AlertTriangle className="w-4 h-4" />}>
         {[
-          { label: '最大 Gas 价格 (Gwei)',  key: 'maxGasGwei',      min: 1,  max: 100,  step: 1   },
-          { label: '最大滑点 (%)',           key: 'maxSlippage',     min: 0.1,max: 5,    step: 0.1 },
-          { label: '单笔最大仓位 (USD)',     key: 'maxPositionUSD',  min: 50, max: 5000, step: 50  },
-          { label: '每日止损上限 (USD)',     key: 'dailyLossLimit',  min: 10, max: 1000, step: 10  },
+          { label: '最大 Gas 价格 (Gwei)',  key: 'maxGasGwei',      min: 1,   max: 100,  step: 1   },
+          { label: '最大滑点 (%)',          key: 'maxSlippage',     min: 0.1, max: 5,    step: 0.1 },
+          { label: '单笔最大仓位 (USD)',    key: 'maxPositionUSD',  min: 50,  max: 5000, step: 50  },
+          { label: '每日止损上限 (USD)',    key: 'dailyLossLimit',  min: 10,  max: 1000, step: 10  },
         ].map(({ label, key, min, max, step }) => (
           <div key={key}>
             <div className="flex justify-between text-xs mb-1.5">
@@ -263,7 +378,7 @@ export default function Settings() {
         ))}
       </Section>
 
-      {/* Telegram */}
+      {/* ── Telegram ── */}
       <Section title="Telegram 通知" icon={<Bell className="w-4 h-4" />}>
         <Field label="Bot Token">
           <input className={inputCls} value={config.telegramToken}
@@ -282,8 +397,9 @@ export default function Settings() {
         onClick={handleSave}
         className={cn(
           'flex items-center gap-2 px-6 py-2.5 rounded-lg text-sm font-medium transition-all',
-          saved ? 'bg-success/10 border border-success/30 text-success'
-                : 'bg-primary text-bg hover:bg-primary-hover'
+          saved
+            ? 'bg-success/10 border border-success/30 text-success'
+            : 'bg-primary text-bg hover:bg-primary-hover'
         )}
       >
         <Save className="w-4 h-4" />

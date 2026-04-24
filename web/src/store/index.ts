@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { Trade, Opportunity, PnLSnapshot, Token } from '@/lib/ws'
 
-export type Chain = 'BSC' | 'ETH' | 'Arbitrum' | 'Base'
+export type Chain = 'BSC' | 'SOL'
 
 export interface Config {
   chain: Chain
