@@ -1,4 +1,4 @@
-import { type PublicClient, parseAbi, decodeAbiParameters } from 'viem'
+import { type PublicClient, decodeAbiParameters } from 'viem'
 import chalk from 'chalk'
 
 export interface PendingSwap {
@@ -8,18 +8,22 @@ export interface PendingSwap {
   router: string
   tokenIn: string
   tokenOut: string
-  amountIn: bigint
+  amountIn: bigint      // BNB value (for ETH→token swaps)
   amountOutMin: bigint
   deadline: bigint
   gasPrice: bigint
 }
 
-const SWAP_SIGNATURES = [
-  '0x38ed1739', // swapExactTokensForTokens
-  '0x7ff36ab5', // swapExactETHForTokens
-  '0x18cbafe5', // swapExactTokensForETH
-  '0xfb3bdb41', // swapETHForExactTokens
-]
+// swapExactETHForTokens(uint256 amountOutMin, address[] path, address to, uint256 deadline)
+const SIG_ETH_FOR_TOKENS    = '0x7ff36ab5'
+// swapExactTokensForETH(uint256 amountIn, uint256 amountOutMin, address[] path, address to, uint256 deadline)
+const SIG_TOKENS_FOR_ETH    = '0x18cbafe5'
+// swapExactTokensForTokens(uint256 amountIn, uint256 amountOutMin, address[] path, address to, uint256 deadline)
+const SIG_TOKENS_FOR_TOKENS = '0x38ed1739'
+// swapETHForExactTokens(uint256 amountOut, address[] path, address to, uint256 deadline)
+const SIG_ETH_FOR_EXACT     = '0xfb3bdb41'
+
+const SWAP_SIGNATURES = [SIG_ETH_FOR_TOKENS, SIG_TOKENS_FOR_ETH, SIG_TOKENS_FOR_TOKENS, SIG_ETH_FOR_EXACT]
 
 export class MempoolMonitor {
   private client: PublicClient
@@ -40,7 +44,6 @@ export class MempoolMonitor {
     this.running = true
     console.log(chalk.cyan('[Mempool] 开始监听待处理交易...'))
 
-    // Subscribe to pending transactions
     try {
       const unwatch = this.client.watchPendingTransactions({
         onTransactions: async (hashes) => {
@@ -64,7 +67,7 @@ export class MempoolMonitor {
         this.running = false
         unwatch()
       }
-    } catch (err) {
+    } catch {
       console.error(chalk.red('[Mempool] 订阅失败，使用轮询模式'))
       return this.startPolling()
     }
@@ -79,15 +82,54 @@ export class MempoolMonitor {
 
   private parseSwapTx(tx: any): PendingSwap | null {
     try {
+      const sig = tx.input.slice(0, 10).toLowerCase()
+      const data = `0x${tx.input.slice(10)}` as `0x${string}`
+
+      let tokenIn  = '0x0000000000000000000000000000000000000000'
+      let tokenOut = '0x0000000000000000000000000000000000000000'
+      let amountOutMin = 0n
+
+      if (sig === SIG_ETH_FOR_TOKENS || sig === SIG_ETH_FOR_EXACT) {
+        // swapExactETHForTokens / swapETHForExactTokens
+        // (uint256, address[], address, uint256)
+        const [_amt, path] = decodeAbiParameters(
+          [{ type: 'uint256' }, { type: 'address[]' }, { type: 'address' }, { type: 'uint256' }],
+          data
+        ) as [bigint, readonly string[], string, bigint]
+        amountOutMin = _amt
+        tokenIn  = (path[0] as string).toLowerCase()
+        tokenOut = (path[path.length - 1] as string).toLowerCase()
+
+      } else if (sig === SIG_TOKENS_FOR_ETH) {
+        // swapExactTokensForETH(uint256 amountIn, uint256 amountOutMin, address[], address, uint256)
+        const [_amtIn, _amtOutMin, path] = decodeAbiParameters(
+          [{ type: 'uint256' }, { type: 'uint256' }, { type: 'address[]' }, { type: 'address' }, { type: 'uint256' }],
+          data
+        ) as [bigint, bigint, readonly string[], string, bigint]
+        amountOutMin = _amtOutMin
+        tokenIn  = (path[0] as string).toLowerCase()
+        tokenOut = (path[path.length - 1] as string).toLowerCase()
+
+      } else if (sig === SIG_TOKENS_FOR_TOKENS) {
+        // swapExactTokensForTokens(uint256 amountIn, uint256 amountOutMin, address[], address, uint256)
+        const [_amtIn, _amtOutMin, path] = decodeAbiParameters(
+          [{ type: 'uint256' }, { type: 'uint256' }, { type: 'address[]' }, { type: 'address' }, { type: 'uint256' }],
+          data
+        ) as [bigint, bigint, readonly string[], string, bigint]
+        amountOutMin = _amtOutMin
+        tokenIn  = (path[0] as string).toLowerCase()
+        tokenOut = (path[path.length - 1] as string).toLowerCase()
+      }
+
       return {
         txHash: tx.hash,
         from: tx.from,
         to: tx.to,
         router: tx.to,
-        tokenIn: '0x0000000000000000000000000000000000000000',
-        tokenOut: '0x0000000000000000000000000000000000000000',
-        amountIn: tx.value ?? 0n,
-        amountOutMin: 0n,
+        tokenIn,
+        tokenOut,
+        amountIn: tx.value ?? 0n,   // BNB sent (only meaningful for ETH→token swaps)
+        amountOutMin,
         deadline: BigInt(Math.floor(Date.now() / 1000) + 300),
         gasPrice: tx.gasPrice ?? 0n,
       }
