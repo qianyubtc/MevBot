@@ -19,12 +19,15 @@
     "files": ["dist/**/*", "ui/**/*", "assets/**/*"],
     "mac": {
       "category": "public.app-category.finance",
+      "icon": "assets/icon.icns",
       "target": [{ "target": "dmg", "arch": ["x64", "arm64"] }]
     },
     "win": {
+      "icon": "assets/icon.ico",
       "target": [{ "target": "nsis", "arch": ["x64"] }]
     },
     "linux": {
+      "icon": "assets/icon.png",
       "target": [{ "target": "AppImage", "arch": ["x64"] }]
     }
   },
