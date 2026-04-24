@@ -9,6 +9,7 @@ export type WsMessage =
   | { type: 'reset_ok'; payload: { ok: boolean } }
   | { type: 'connected'; payload: { version: string } }
   | { type: 'error'; payload: { message: string } }
+  | { type: 'mempool_tx'; payload: { hash: string; bnb: number; usd: number } }
 
 export interface StrategyStatus {
   strategy: string

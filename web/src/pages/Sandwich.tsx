@@ -6,55 +6,62 @@ import type { Token } from '@/lib/ws'
 import { Play, Square, Search, RefreshCw, Loader2, WifiOff, AlertTriangle, Crosshair, Activity } from 'lucide-react'
 import { cn, formatUSD } from '@/lib/utils'
 
-// ── Animated mempool feed ─────────────────────────────────────────────────
+// ── Real mempool feed (data from Runner via WS) ───────────────────────────
+interface MempoolLine { id: number; hash: string; bnb: string; usd: number; fresh: boolean }
+
 function MempoolFeed() {
-  const [lines, setLines] = useState<{ id: number; hash: string; bnb: string; fresh: boolean }[]>([])
+  const [lines, setLines] = useState<MempoolLine[]>([])
+  const [rxCount, setRxCount] = useState(0)
   const counter = useRef(0)
 
   useEffect(() => {
-    const tick = () => {
-      const hash = '0x' + Array.from({ length: 8 }, () =>
-        Math.floor(Math.random() * 16).toString(16)
-      ).join('') + '…'
-      const bnb = (Math.random() * 20 + 0.05).toFixed(3)
+    const off = wsClient.on((msg) => {
+      if (msg.type !== 'mempool_tx') return
+      const { hash, bnb, usd } = msg.payload
       const id = ++counter.current
-      setLines(prev => [{ id, hash, bnb, fresh: true }, ...prev].slice(0, 5))
-      // Un-highlight after one tick
-      setTimeout(() => setLines(prev => prev.map(l => l.id === id ? { ...l, fresh: false } : l)), 400)
-    }
-    // Irregular cadence like real mempool
-    let timer: ReturnType<typeof setTimeout>
-    const schedule = () => {
-      timer = setTimeout(() => { tick(); schedule() }, 600 + Math.random() * 1400)
-    }
-    schedule()
-    return () => clearTimeout(timer)
+      const short = hash.slice(0, 10) + '…'
+      setLines(prev => [{ id, hash: short, bnb: bnb.toFixed(3), usd, fresh: true }, ...prev].slice(0, 6))
+      setRxCount(c => c + 1)
+      setTimeout(() => setLines(prev => prev.map(l => l.id === id ? { ...l, fresh: false } : l)), 500)
+    })
+    return off
   }, [])
 
   return (
     <div className="rounded-lg bg-bg-elevated border border-bg-border p-3 space-y-1.5">
       <div className="flex items-center gap-1.5 mb-2">
         <Activity className="w-3 h-3 text-primary" />
-        <span className="text-xs text-text-muted">Mempool 交易流</span>
-        <span className="ml-auto flex gap-0.5">
-          {[0,1,2].map(i => (
-            <span key={i} className="inline-block w-1 bg-primary rounded-full animate-bounce"
-              style={{ height: `${6 + i * 3}px`, animationDelay: `${i * 0.15}s` }} />
-          ))}
+        <span className="text-xs text-text-muted">目标 Mempool 交易</span>
+        <span className="ml-auto flex items-center gap-2">
+          {rxCount > 0 && (
+            <span className="text-xs font-mono text-text-muted opacity-60">{rxCount} 笔</span>
+          )}
+          <span className="flex gap-0.5">
+            {[0,1,2].map(i => (
+              <span key={i} className="inline-block w-1 bg-primary rounded-full animate-bounce"
+                style={{ height: `${6 + i * 3}px`, animationDelay: `${i * 0.15}s` }} />
+            ))}
+          </span>
         </span>
       </div>
-      {lines.length === 0 && (
-        <div className="text-xs text-text-muted opacity-40 font-mono">等待交易流…</div>
-      )}
-      {lines.map(({ id, hash, bnb, fresh }) => (
-        <div key={id} className={cn(
-          'flex items-center justify-between font-mono text-xs transition-colors duration-300',
-          fresh ? 'text-primary' : 'text-text-muted opacity-60'
-        )}>
-          <span>{hash}</span>
-          <span>{bnb} BNB</span>
+      {lines.length === 0 ? (
+        <div className="text-xs text-text-muted opacity-40 font-mono py-1">
+          等待目标币种交易进入 Mempool…
         </div>
-      ))}
+      ) : (
+        lines.map(({ id, hash, bnb, usd, fresh }) => (
+          <div key={id} className={cn(
+            'flex items-center justify-between font-mono text-xs transition-colors duration-300',
+            fresh ? 'text-primary' : 'text-text-muted opacity-60'
+          )}>
+            <span>{hash}</span>
+            <span className="flex items-center gap-1.5">
+              <span>{bnb} BNB</span>
+              <span className={cn('text-xs', fresh ? 'text-primary/70' : 'opacity-40')}>≈${usd}</span>
+            </span>
+          </div>
+        ))
+      )}
     </div>
   )
 }
@@ -334,8 +341,8 @@ export default function Sandwich() {
               {/* Quick stats */}
               <div className="grid grid-cols-3 gap-2 text-xs">
                 <div className="rounded-lg bg-bg-elevated border border-bg-border px-2 py-1.5 text-center">
-                  <div className="text-text-muted mb-0.5">Gas 倍数</div>
-                  <div className="font-mono text-white">{cfg.priorityGasMultiplier}x</div>
+                  <div className="text-text-muted mb-0.5">Gas 溢价</div>
+                  <div className="font-mono text-white">+{cfg.priorityGasMultiplier}G</div>
                 </div>
                 <div className="rounded-lg bg-bg-elevated border border-bg-border px-2 py-1.5 text-center">
                   <div className="text-text-muted mb-0.5">滑点</div>

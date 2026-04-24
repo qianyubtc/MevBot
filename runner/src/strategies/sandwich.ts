@@ -146,6 +146,13 @@ export class SandwichStrategy {
     const isEthForToken = swap.amountIn > 0n && swap.tokenOut === targetToken
     if (!isEthForToken) return
 
+    // ── Broadcast real mempool tx to web UI ────────────────────────────────
+    const victimBNBRaw = Number(formatEther(swap.amountIn))
+    this.ws.broadcast({
+      type: 'mempool_tx',
+      payload: { hash: swap.txHash, bnb: victimBNBRaw, usd: Math.round(victimBNBRaw * BNB_PRICE_USD) },
+    })
+
     // ── 2. Victim BNB amount ───────────────────────────────────────────────
     const victimBNB = Number(formatEther(swap.amountIn))
     // Low floor — let AMM math + minProfitUSD filter unprofitable ops
