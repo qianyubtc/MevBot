@@ -1,139 +1,460 @@
-import { type PublicClient, type WalletClient, formatUnits } from 'viem'
-import { WsServer } from '../core/ws-server.js'
-import { saveTrade, saveSnapshot } from '../core/db.js'
+import {
+  type PublicClient, type WalletClient,
+  type Address, parseAbi, parseUnits, formatUnits, formatEther, encodeFunctionData, getAddress,
+} from 'viem'
 import chalk from 'chalk'
 import { randomUUID } from 'crypto'
+import { BlockWatcher } from '../core/block-watcher.js'
+import { PuissantClient, logBundleResult, type PuissantTx } from '../core/puissant.js'
+import { SANDWICH_PROXY_ABI, SANDWICH_PROXY_BYTECODE } from '../contracts/proxy.js'
+import { saveConfig, loadConfig } from '../core/config.js'
+import { saveTrade } from '../core/db.js'
+import { WsServer } from '../core/ws-server.js'
 
-export interface ArbitrageConfig {
-  minProfitUSD: number
-  maxGasGwei: number
-  minSpreadPct: number
+// ── Strategy: Multi-Token Cross-DEX Arbitrage ──────────────────────────────
+//
+// Difference from Backrun:
+//   • Backrun watches ONE user-picked token, reacts to swaps that touch it.
+//   • Arbitrage watches a WHITELIST of high-liquidity tokens every block,
+//     scoring every (token × dex-pair) for spread, then executing the best.
+//
+// Same Puissant-bundle execution path as Backrun (proxy.frontrun on cheap DEX
+// → proxy.backrun on rich DEX, atomic bundle, `acceptReverting: []` so we
+// never pay gas on a broken arb).
+
+const WBNB = '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c' as Address
+
+const FACTORY_ABI = parseAbi([
+  'function getPair(address tokenA, address tokenB) view returns (address pair)',
+])
+const PAIR_ABI = parseAbi([
+  'function getReserves() view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)',
+  'function token0() view returns (address)',
+])
+
+const FEE_NUM = 9975n
+const FEE_DEN = 10000n
+
+const GAS_DEPLOY   = 1_200_000n
+const GAS_FRONTRUN =   240_000n
+const GAS_BACKRUN  =   200_000n
+
+const BNB_PRICE_FALLBACK = 580
+
+// Default token whitelist — all high-liquidity BSC majors. User can override
+// via the config in the UI. These all have liquid Pancake AND BiSwap pools.
+export const DEFAULT_TOKEN_WHITELIST: { address: Address; symbol: string }[] = [
+  { address: '0x0E09FaBB73Bd3Ade0a17ECC321fD13a19e81cE82', symbol: 'CAKE' },
+  { address: '0x55d398326f99059fF775485246999027B3197955', symbol: 'USDT' },
+  { address: '0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56', symbol: 'BUSD' },
+  { address: '0x2170Ed0880ac9A755fd29B2688956BD959F933F8', symbol: 'ETH'  },
+  { address: '0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c', symbol: 'BTCB' },
+  { address: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d', symbol: 'USDC' },
+  { address: '0xfb6115445Bff7b52FeB98650C87f44907E58f802', symbol: 'AAVE' },
+  { address: '0xCC42724C6683B7E57334c4E856f4c9965ED682bD', symbol: 'MATIC'},
+]
+
+const DEXES = [
+  {
+    name:    'PancakeSwap',
+    router:  '0x10ED43C718714eb63d5aA57B78B54704E256024E' as Address,
+    factory: '0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73' as Address,
+  },
+  {
+    name:    'BiSwap',
+    router:  '0x3a6d8cA21D1CF76F653A67577FA0D27453350dD8' as Address,
+    factory: '0x858E3312ed3A876947EA49d572A7C42DE08af7EE' as Address,
+  },
+] as const
+
+type DexKey = typeof DEXES[number]['name']
+
+interface PoolState {
+  name:         DexKey
+  router:       Address
+  pair:         Address
+  reserveBNB:   bigint
+  reserveToken: bigint
 }
 
-interface PriceFeed {
-  dex: string
-  router: `0x${string}`
-  price: number
+interface TokenPairs {
+  symbol:  string
+  address: Address
+  pancake: Address | null
+  biswap:  Address | null
+}
+
+export interface ArbitrageConfig {
+  minProfitUSD:       number
+  maxGasGwei:         number
+  executionAmountUSD: number
+  slippageTolerance:  number
+  minSpreadPct:       number
+  // Optional override of the default whitelist (UI-supplied).
+  tokens?: { address: string; symbol: string }[]
+  rpcUrl?: string
+}
+
+function getAmountOut(amountIn: bigint, reserveIn: bigint, reserveOut: bigint): bigint {
+  if (amountIn === 0n || reserveIn === 0n || reserveOut === 0n) return 0n
+  const amountInWithFee = amountIn * FEE_NUM
+  return (amountInWithFee * reserveOut) / (reserveIn * FEE_DEN + amountInWithFee)
+}
+
+function cleanError(err: any): string {
+  const cands = [err?.shortMessage, err?.cause?.shortMessage, err?.cause?.message, err?.message]
+  for (const c of cands) {
+    if (!c) continue
+    const line = String(c).split('\n')[0]
+      .replace(/\s*URL:.*/, '').replace(/\s*Request body:.*/, '')
+      .replace(/\s*Version:.*/, '').replace(/\s*Details:.*/, '').trim()
+    if (line.length > 0 && line.length < 200) return line
+  }
+  return '未知错误'
 }
 
 export class ArbitrageStrategy {
-  private running = false
-  private intervalId?: ReturnType<typeof setInterval>
-  private scanned = 0
-  private totalProfit = 0
+  private running    = false
+  private executing  = false
+  private scanned    = 0
+  private proxyAddress: Address | null = null
+  private bnbPrice   = BNB_PRICE_FALLBACK
+  private bnbPriceTimer?: NodeJS.Timeout
+  private watcher:   BlockWatcher
+  private puissant:  PuissantClient
+  private tokenPairs: TokenPairs[] = []
+  private lastExecutedBlock = 0n
 
   constructor(
     private publicClient: PublicClient,
     private walletClient: WalletClient,
-    private ws: WsServer,
-    private config: ArbitrageConfig
-  ) {}
+    private ws:           WsServer,
+    private config:       ArbitrageConfig,
+  ) {
+    // We don't need to filter by router — we evaluate the whole whitelist
+    // every block regardless of what swaps appeared. Pass empty router list.
+    this.watcher  = new BlockWatcher(publicClient, [])
+    this.puissant = new PuissantClient(walletClient, publicClient)
+  }
 
   async start() {
     if (this.running) return
     this.running = true
-    console.log(chalk.green('[Arbitrage] 策略启动'))
+    const tokenList = (this.config.tokens?.length ? this.config.tokens : DEFAULT_TOKEN_WHITELIST)
+      .map(t => ({ address: getAddress(t.address as `0x${string}`), symbol: t.symbol }))
 
-    this.ws.broadcast({ type: 'status', payload: { strategy: 'arbitrage', running: true, scanned: 0, pending: 0 } })
-
-    this.intervalId = setInterval(() => this.scanOpportunities(), 2000)
-  }
-
-  private async scanOpportunities() {
-    if (!this.running) return
-    this.scanned++
-
-    const pairs = [
-      { symbol: 'BNB/USDT', token0: '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c', token1: '0x55d398326f99059fF775485246999027B3197955' },
-      { symbol: 'ETH/BNB', token0: '0x2170Ed0880ac9A755fd29B2688956BD959F933F8', token1: '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c' },
-    ]
-
-    for (const pair of pairs) {
-      const prices = await this.fetchPrices(pair.symbol)
-      if (prices.length < 2) continue
-
-      const sorted = prices.sort((a, b) => a.price - b.price)
-      const low = sorted[0]
-      const high = sorted[sorted.length - 1]
-      const spread = ((high.price - low.price) / low.price) * 100
-
-      if (spread >= this.config.minSpreadPct) {
-        const profitUSD = this.estimateProfit(low.price, high.price, 1000)
-        const gasUSD = 0.8
-
-        if (profitUSD - gasUSD >= this.config.minProfitUSD) {
-          console.log(chalk.green(`[Arbitrage] ${pair.symbol} 价差 ${spread.toFixed(2)}% 预估利润 $${profitUSD.toFixed(2)}`))
-
-          this.ws.broadcast({
-            type: 'opportunity',
-            payload: {
-              id: randomUUID(),
-              strategy: 'arbitrage',
-              token: pair.symbol,
-              tokenAddress: pair.token0,
-              chain: 'BSC',
-              profitUSD,
-              profitNative: profitUSD / 580,
-              gasUSD,
-              netProfit: profitUSD - gasUSD,
-              timestamp: Date.now(),
-            },
-          })
-
-          await this.executeArbitrage(pair.symbol, low, high, profitUSD, gasUSD)
-        }
-      }
-    }
-  }
-
-  private async fetchPrices(symbol: string): Promise<PriceFeed[]> {
-    // Simulate price feeds (in production: query on-chain via getAmountsOut)
-    const base = symbol === 'BNB/USDT' ? 580 : 4.91
-    return [
-      { dex: 'PancakeSwap', router: '0x10ED43C718714eb63d5aA57B78B54704E256024E', price: base + (Math.random() - 0.5) * base * 0.01 },
-      { dex: 'BiSwap', router: '0x3a6d8cA21D1CF76F653A67577FA0D27453350dD8', price: base + (Math.random() - 0.5) * base * 0.01 },
-      { dex: 'MDEX', router: '0x62c1E3f9a3B16CCCEe6E24fB8aE68f0A6B3e6e79', price: base + (Math.random() - 0.5) * base * 0.01 },
-    ]
-  }
-
-  private estimateProfit(buyPrice: number, sellPrice: number, amountUSD: number): number {
-    return (amountUSD / buyPrice) * (sellPrice - buyPrice) * 0.98
-  }
-
-  private async executeArbitrage(symbol: string, buy: PriceFeed, sell: PriceFeed, profitUSD: number, gasUSD: number) {
-    const id = randomUUID()
-    const txHash = '0x' + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('')
+    console.log(chalk.green(`[Arbitrage] 策略启动 → 监控 ${tokenList.length} 个 token 跨 DEX 价差`))
 
     try {
-      // TODO: actual on-chain execution
-      // 1. getAmountsOut on buy DEX
-      // 2. swap on buy DEX
-      // 3. swap on sell DEX
+      await this.refreshBnbPrice()
+      this.bnbPriceTimer = setInterval(() => this.refreshBnbPrice(), 120_000)
 
-      const netProfit = profitUSD - gasUSD
-      this.totalProfit += netProfit
-      saveSnapshot(this.totalProfit)
+      await this.ensureProxy()
 
-      const trade = { id, strategy: 'arbitrage', token: symbol, txHash, chain: 'BSC', profitUSD, gasUSD, status: 'success' as const, timestamp: Date.now() }
-      saveTrade(trade)
-      this.ws.broadcast({ type: 'trade', payload: trade })
-      console.log(chalk.green(`[Arbitrage] 套利成功: +$${netProfit.toFixed(2)}`))
+      // Resolve every token's pair on both DEXes once. Tokens missing from
+      // either DEX are silently dropped — no point scanning them.
+      console.log(chalk.dim(`[Arbitrage] 解析交易对 ...`))
+      for (const t of tokenList) {
+        const [pancake, biswap] = await Promise.all([
+          this.lookupPair(DEXES[0].factory, t.address),
+          this.lookupPair(DEXES[1].factory, t.address),
+        ])
+        if (pancake && biswap) {
+          this.tokenPairs.push({ symbol: t.symbol, address: t.address, pancake, biswap })
+        } else {
+          console.log(chalk.dim(`  · ${t.symbol} 跳过 (${!pancake ? '无 Pancake 池' : '无 BiSwap 池'})`))
+        }
+      }
+      if (this.tokenPairs.length === 0) {
+        throw new Error('白名单内没有任何 token 同时存在于 Pancake + BiSwap，无法套利')
+      }
+      console.log(chalk.dim(`[Arbitrage] 已锁定 ${this.tokenPairs.length} 个跨 DEX 对: ${this.tokenPairs.map(t => t.symbol).join(', ')}`))
+
+      this.watcher.onBlock((_swaps, bn) => this.onBlock(bn))
+      await this.watcher.start()
+
+      this.ws.broadcast({ type: 'status', payload: { strategy: 'arbitrage', running: true, scanned: 0, pending: 0 } })
     } catch (err: any) {
-      const trade = { id, strategy: 'arbitrage', token: symbol, txHash, chain: 'BSC', profitUSD: 0, gasUSD, status: 'failed' as const, timestamp: Date.now() }
-      saveTrade(trade)
-      this.ws.broadcast({ type: 'trade', payload: trade })
-      console.error(chalk.red('[Arbitrage] 执行失败:'), err.message)
+      this.running = false
+      this.watcher.stop()
+      if (this.bnbPriceTimer) { clearInterval(this.bnbPriceTimer); this.bnbPriceTimer = undefined }
+      this.ws.broadcast({ type: 'status', payload: { strategy: 'arbitrage', running: false, scanned: 0, pending: 0 } })
+      const msg = cleanError(err) || String(err?.message ?? err)
+      console.error(chalk.red(`[Arbitrage] 启动失败: ${msg}`))
+      this.ws.broadcast({ type: 'error', payload: { message: `Arbitrage 启动失败: ${msg}` } })
+      throw err
     }
   }
 
   stop() {
     this.running = false
-    if (this.intervalId) clearInterval(this.intervalId)
-    this.ws.broadcast({ type: 'status', payload: { strategy: 'arbitrage', running: false, scanned: this.scanned, pending: 0 } })
+    this.watcher.stop()
+    if (this.bnbPriceTimer) { clearInterval(this.bnbPriceTimer); this.bnbPriceTimer = undefined }
+    this.ws.broadcast({ type: 'status', payload: { strategy: 'arbitrage', running: false, scanned: 0, pending: 0 } })
     console.log(chalk.yellow('[Arbitrage] 策略已停止'))
   }
 
-  get isRunning() {
-    return this.running
+  get isRunning() { return this.running }
+
+  // ── Proxy deployment (shared with sandwich/backrun) ─────────────────────
+  private async ensureProxy() {
+    const account = this.walletClient.account!
+    const cfg     = loadConfig()
+
+    if (cfg.sandwichProxyAddress) {
+      const code = await this.publicClient.getBytecode({ address: cfg.sandwichProxyAddress as Address })
+      if (code && code !== '0x') {
+        this.proxyAddress = cfg.sandwichProxyAddress as Address
+        console.log(chalk.dim(`[Arbitrage] 复用代理合约: ${this.proxyAddress}`))
+        return
+      }
+    }
+
+    const balance = await this.publicClient.getBalance({ address: account.address })
+    if (balance < parseUnits('0.005', 18)) {
+      throw new Error(`部署代理合约需至少 0.005 BNB (当前 ${formatUnits(balance, 18)} BNB)`)
+    }
+
+    console.log(chalk.cyan('[Arbitrage] 部署代理合约 ...'))
+    const hash = await this.walletClient.deployContract({
+      abi: SANDWICH_PROXY_ABI, bytecode: SANDWICH_PROXY_BYTECODE as `0x${string}`,
+      account, chain: null, gas: GAS_DEPLOY,
+    })
+    const receipt = await this.publicClient.waitForTransactionReceipt({ hash, timeout: 60_000 })
+    if (!receipt.contractAddress || receipt.status !== 'success') {
+      throw new Error('代理合约部署失败')
+    }
+    this.proxyAddress = getAddress(receipt.contractAddress)
+    saveConfig({ ...cfg, sandwichProxyAddress: this.proxyAddress })
+    console.log(chalk.green(`[Arbitrage] ✓ 代理合约已部署: ${this.proxyAddress}`))
+  }
+
+  private async lookupPair(factory: Address, token: Address): Promise<Address | null> {
+    try {
+      const pair = await this.publicClient.readContract({
+        address: factory, abi: FACTORY_ABI, functionName: 'getPair', args: [token, WBNB],
+      }) as Address
+      if (!pair || pair === '0x0000000000000000000000000000000000000000') return null
+      return pair
+    } catch { return null }
+  }
+
+  private async refreshBnbPrice() {
+    try {
+      const BUSD = '0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56' as Address
+      const ROUTER_ABI = parseAbi([
+        'function getAmountsOut(uint256 amountIn, address[] path) view returns (uint256[] amounts)',
+      ])
+      const amounts = await this.publicClient.readContract({
+        address: DEXES[0].router, abi: ROUTER_ABI, functionName: 'getAmountsOut',
+        args: [parseUnits('1', 18), [WBNB, BUSD]],
+      }) as bigint[]
+      const p = Number(formatUnits(amounts[1], 18))
+      if (p > 100 && p < 10000) this.bnbPrice = p
+    } catch { /* keep prev */ }
+  }
+
+  // Every block: rank all tokens by spread, pick the most profitable, execute.
+  // We only execute one bundle per block (nonce contention with ourselves).
+  private async onBlock(blockNumber: bigint) {
+    if (!this.running || this.executing) return
+    if (blockNumber <= this.lastExecutedBlock) return
+    this.scanned++
+
+    this.executing = true
+    try {
+      // Score every token. Picking the best instead of the first profitable
+      // one increases capital efficiency at the cost of one extra block of
+      // RPC reads per token — fine on a private RPC.
+      let best: { token: TokenPairs; buy: PoolState; sell: PoolState; spread: number; netUSD: number } | null = null
+      for (const tp of this.tokenPairs) {
+        const ev = await this.evaluateToken(tp)
+        if (!ev) continue
+        if (!best || ev.netUSD > best.netUSD) best = { token: tp, ...ev }
+      }
+
+      if (best && best.netUSD >= this.config.minProfitUSD) {
+        console.log(chalk.cyan(
+          `[Arbitrage] ✓ 最佳机会: ${best.token.symbol} | 价差 ${best.spread.toFixed(3)}% | ` +
+          `买@${best.buy.name} 卖@${best.sell.name} | 净利 $${best.netUSD.toFixed(2)}`
+        ))
+        this.lastExecutedBlock = blockNumber
+        await this.executeArb(best.token, best.buy, best.sell, best.netUSD)
+      }
+    } finally {
+      this.executing = false
+      this.ws.broadcast({
+        type: 'status',
+        payload: { strategy: 'arbitrage', running: true, scanned: this.scanned, pending: 0 },
+      })
+    }
+  }
+
+  // Returns null if pool data unavailable, spread below threshold, or sized
+  // trade unprofitable. Returns full plan if it's a real opportunity.
+  private async evaluateToken(tp: TokenPairs): Promise<{
+    buy: PoolState; sell: PoolState; spread: number; netUSD: number;
+    amountIn: bigint; minFrontOut: bigint; minBackOut: bigint;
+  } | null> {
+    if (!tp.pancake || !tp.biswap) return null
+
+    const [poolA, poolB] = await Promise.all([
+      this.loadPool('PancakeSwap', tp.pancake, DEXES[0].router),
+      this.loadPool('BiSwap',      tp.biswap,  DEXES[1].router),
+    ])
+    if (!poolA || !poolB) return null
+
+    const priceA = Number(poolA.reserveBNB) / Number(poolA.reserveToken)
+    const priceB = Number(poolB.reserveBNB) / Number(poolB.reserveToken)
+    const minP   = Math.min(priceA, priceB)
+    const maxP   = Math.max(priceA, priceB)
+    const spread = ((maxP - minP) / minP) * 100
+    if (spread < this.config.minSpreadPct) return null
+
+    const buy  = priceA < priceB ? poolA : poolB
+    const sell = priceA < priceB ? poolB : poolA
+
+    const budgetBNB = this.config.executionAmountUSD / this.bnbPrice
+    const maxByImpactBNB = Number(formatEther(buy.reserveBNB)) * 0.005
+    const sizeBNB = Math.min(budgetBNB, maxByImpactBNB)
+    if (sizeBNB <= 0.001) return null
+
+    const amountIn = parseUnits(sizeBNB.toFixed(6), 18)
+    const tokenOut = getAmountOut(amountIn,   buy.reserveBNB,  buy.reserveToken)
+    if (tokenOut === 0n) return null
+    const bnbOut   = getAmountOut(tokenOut, sell.reserveToken, sell.reserveBNB)
+
+    const profitBNB = Number(formatEther(bnbOut)) - sizeBNB
+
+    const gasPriceWei = parseUnits(String(Math.min(this.config.maxGasGwei, 5)), 9)
+    const gasCostBNB  = Number(formatEther((GAS_FRONTRUN + GAS_BACKRUN) * gasPriceWei))
+    const gasCostUSD  = gasCostBNB * this.bnbPrice
+    const netUSD = profitBNB * this.bnbPrice - gasCostUSD
+
+    const slip = this.config.slippageTolerance / 100
+    const minFrontOut = tokenOut * BigInt(Math.floor((1 - slip)     * 10000)) / 10000n
+    const minBackOut  = bnbOut   * BigInt(Math.floor((1 - slip * 2) * 10000)) / 10000n
+
+    return { buy, sell, spread, netUSD, amountIn, minFrontOut, minBackOut }
+  }
+
+  private async loadPool(
+    name: DexKey, pair: Address, router: Address,
+  ): Promise<PoolState | null> {
+    try {
+      const [reserves, token0] = await Promise.all([
+        this.publicClient.readContract({ address: pair, abi: PAIR_ABI, functionName: 'getReserves' }),
+        this.publicClient.readContract({ address: pair, abi: PAIR_ABI, functionName: 'token0' }),
+      ])
+      const isWbnb0 = String(token0).toLowerCase() === WBNB.toLowerCase()
+      const reserveBNB   = isWbnb0 ? reserves[0] : reserves[1]
+      const reserveToken = isWbnb0 ? reserves[1] : reserves[0]
+      if (reserveBNB === 0n || reserveToken === 0n) return null
+      return { name, router, pair, reserveBNB, reserveToken }
+    } catch { return null }
+  }
+
+  // Re-evaluate at execution time and submit the bundle. We re-run the
+  // simulator inline because reserves can drift in the milliseconds between
+  // ranking and execution; using stale numbers would let us submit a bundle
+  // that the relay then drops as unprofitable.
+  private async executeArb(
+    tp: TokenPairs, _buy: PoolState, _sell: PoolState, _expectedUSD: number
+  ) {
+    if (!this.running || !this.proxyAddress) return
+    const ev = await this.evaluateToken(tp)
+    if (!ev) return
+
+    const id      = randomUUID()
+    const account = this.walletClient.account!
+    const proxy   = this.proxyAddress
+    const tokenAd = tp.address
+
+    try {
+      const balanceBefore = await this.publicClient.getBalance({ address: account.address })
+      const nonce = await this.publicClient.getTransactionCount({
+        address: account.address, blockTag: 'pending',
+      })
+
+      const gasPriceWei = parseUnits(String(Math.min(this.config.maxGasGwei, 5)), 9)
+
+      const frontData = encodeFunctionData({
+        abi: SANDWICH_PROXY_ABI, functionName: 'frontrun',
+        args: [ev.buy.router, tokenAd, WBNB, ev.minFrontOut],
+      })
+      const frontTx: PuissantTx = {
+        to: proxy, data: frontData, value: ev.amountIn,
+        gas: GAS_FRONTRUN, gasPrice: gasPriceWei, nonce,
+      }
+
+      const backData = encodeFunctionData({
+        abi: SANDWICH_PROXY_ABI, functionName: 'backrun',
+        args: [ev.sell.router, tokenAd, WBNB, ev.minBackOut],
+      })
+      const backTx: PuissantTx = {
+        to: proxy, data: backData, value: 0n,
+        gas: GAS_BACKRUN, gasPrice: gasPriceWei, nonce: nonce + 1,
+      }
+
+      console.log(chalk.cyan(
+        `[Arbitrage] → 提交 bundle: ${tp.symbol} buy@${ev.buy.name} sell@${ev.sell.name}, 规模 ${formatEther(ev.amountIn)} BNB`
+      ))
+
+      this.ws.broadcast({
+        type: 'opportunity',
+        payload: {
+          id, strategy: 'arbitrage',
+          token: tp.symbol, tokenAddress: tp.address,
+          chain: 'BSC',
+          profitUSD: ev.netUSD, profitNative: ev.netUSD / this.bnbPrice,
+          gasUSD: 0, netProfit: ev.netUSD, timestamp: Date.now(),
+        },
+      })
+
+      const result = await this.puissant.submitBundle([frontTx, backTx], {
+        ttlSeconds: 30, acceptRevertingHashes: [],
+      })
+      logBundleResult(`Arbitrage bundle #${id.slice(0, 6)}`, result)
+
+      if (!result.ok) {
+        this.recordFailed(id, tp.symbol, result.error ?? 'relay 未返回详细错误')
+        return
+      }
+
+      // Confirm via balance delta after one block.
+      await new Promise((r) => setTimeout(r, 5_000))
+      const balanceAfter = await this.publicClient.getBalance({ address: account.address })
+      const diffBNB      = Number(formatEther(balanceAfter - balanceBefore))
+      const actualUSD    = diffBNB * this.bnbPrice
+
+      const trade = {
+        id, strategy: 'arbitrage', token: tp.symbol,
+        txHash: result.txHashes?.[0] ?? '', chain: 'BSC',
+        profitUSD: actualUSD, gasUSD: 0,
+        status: actualUSD >= 0 ? 'success' as const : 'failed' as const,
+        timestamp: Date.now(),
+      }
+      saveTrade(trade)
+      this.ws.broadcast({ type: 'trade', payload: trade })
+
+      if (actualUSD >= 0) {
+        console.log(chalk.green(`[Arbitrage] ✓ 套利完成 ${tp.symbol} +$${actualUSD.toFixed(2)}`))
+      } else {
+        console.log(chalk.yellow(`[Arbitrage] 套利亏损 ${tp.symbol} $${actualUSD.toFixed(2)}`))
+      }
+    } catch (err: any) {
+      this.recordFailed(id, tp.symbol, cleanError(err))
+    }
+  }
+
+  private recordFailed(id: string, symbol: string, reason: string) {
+    console.error(chalk.red(`[Arbitrage] ✗ 失败: ${reason}`))
+    const trade = {
+      id, strategy: 'arbitrage', token: symbol, txHash: '',
+      chain: 'BSC', profitUSD: 0, gasUSD: 0,
+      status: 'failed' as const, timestamp: Date.now(),
+    }
+    saveTrade(trade)
+    this.ws.broadcast({ type: 'trade', payload: trade })
   }
 }

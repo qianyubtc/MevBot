@@ -38,7 +38,11 @@ export interface StrategyConfig {
     rpcUrl?: string
     minProfitUSD: number
     maxGasGwei: number
+    executionAmountUSD: number
+    slippageTolerance: number
     minSpreadPct: number
+    /** Empty = use the runner's default whitelist (CAKE/USDT/BUSD/ETH/...). */
+    tokens?: { address: string; symbol: string }[]
     enabled: boolean
   }
   backrun: {
@@ -63,6 +67,8 @@ export interface StrategyConfig {
     maxBuyUSD: number
     targetGainPct: number
     stopLossPct: number
+    /** Reject if simulated round-trip tax exceeds this %. */
+    maxTaxPct: number
     enabled: boolean
   }
   liquidation: {
@@ -135,8 +141,10 @@ const defaultStrategyConfig: StrategyConfig = {
   },
   arbitrage: {
     rpcUrl: '',
-    minProfitUSD: 3,
-    maxGasGwei: 8,
+    minProfitUSD: 0.5,
+    maxGasGwei: 5,
+    executionAmountUSD: 5,
+    slippageTolerance: 1,
     minSpreadPct: 0.3,
     enabled: false,
   },
@@ -162,6 +170,7 @@ const defaultStrategyConfig: StrategyConfig = {
     maxBuyUSD: 5,
     targetGainPct: 50,
     stopLossPct: 20,
+    maxTaxPct: 25,
     enabled: false,
   },
   liquidation: {
