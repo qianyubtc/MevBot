@@ -68,7 +68,7 @@ export async function startRunner() {
       ? join(__dirname, '../assets/runner-bundle.js')
       : join(__dirname, '../../runner/dist-cjs/bundle.js')
     require(runnerPath)
-    emit('info', '✓ MEV Terminal Runner 已启动')
+    emit('info', '✓ OC SuperBot Runner 已启动')
   } catch (err: any) {
     emit('error', `Runner 加载失败: ${err.message}`)
   }

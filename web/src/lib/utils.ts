@@ -5,7 +5,8 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
-export function formatUSD(value: number, decimals = 2): string {
+export function formatUSD(value: number | null | undefined, decimals = 2): string {
+  if (value == null || !Number.isFinite(value)) return '$—'
   if (Math.abs(value) >= 1e6) return `$${(value / 1e6).toFixed(2)}M`
   if (Math.abs(value) >= 1e3) return `$${(value / 1e3).toFixed(2)}K`
   return `$${value.toFixed(decimals)}`

@@ -41,7 +41,7 @@ export default function Dashboard() {
         <div className="rounded-xl border border-warning/30 bg-warning/5 px-4 py-3 flex items-center gap-3">
           <div className="w-2 h-2 rounded-full bg-warning animate-pulse" />
           <div className="text-sm text-warning">
-            本地 Runner 未连接 —— 请下载并启动 <span className="font-mono">mevbot-runner</span>
+            本地 Runner 未连接 —— 请下载并启动 <span className="font-mono">OC SuperBot</span>
           </div>
         </div>
       )}

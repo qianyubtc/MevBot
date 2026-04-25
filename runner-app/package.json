@@ -1,7 +1,7 @@
 {
-  "name": "mevbot-app",
+  "name": "oc-superbot-app",
   "version": "0.4.0",
-  "description": "MEV Terminal Runner",
+  "description": "OC SuperBot — On-chain MEV trading desktop app",
   "main": "dist/main.js",
   "private": true,
   "scripts": {
@@ -13,8 +13,8 @@
     "pack:linux": "electron-builder --linux"
   },
   "build": {
-    "appId": "com.mevterminal.runner",
-    "productName": "MEV Terminal",
+    "appId": "com.onchainsuperbot.app",
+    "productName": "OC SuperBot",
     "icon": "assets/icon",
     "directories": { "output": "release" },
     "files": [

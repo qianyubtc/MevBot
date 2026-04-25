@@ -25,7 +25,7 @@ export default function Sidebar() {
       {/* Logo */}
       <div className="h-14 flex items-center px-4 border-b border-bg-border">
         <Activity className="w-5 h-5 text-primary mr-2" />
-        <span className="font-mono font-semibold text-white tracking-wider">MEV Terminal</span>
+        <span className="font-mono font-semibold text-white tracking-wider">OnChain SuperBot</span>
       </div>
 
       {/* Runner status */}

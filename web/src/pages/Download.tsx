@@ -104,8 +104,8 @@ export default function Download() {
         <Wifi className={cn('w-4 h-4', runnerConnected ? 'text-success' : 'text-warning')} />
         <span className={cn('text-sm', runnerConnected ? 'text-success' : 'text-warning')}>
           {runnerConnected
-            ? 'MEV Terminal 已连接 — ws://localhost:8765'
-            : '未检测到 MEV Terminal，请按下方步骤下载安装'}
+            ? 'OC SuperBot 已连接 — ws://localhost:8765'
+            : '未检测到 OC SuperBot，请按下方步骤下载安装'}
         </span>
         {runnerConnected && <span className="ml-auto w-2 h-2 rounded-full bg-success animate-pulse" />}
       </div>
@@ -114,7 +114,7 @@ export default function Download() {
       <div className="rounded-xl bg-bg-surface border border-bg-border overflow-hidden">
         <div className="px-5 py-4 border-b border-bg-border flex items-center justify-between">
           <div>
-            <div className="text-sm font-medium text-white mb-0.5">下载 MEV Terminal</div>
+            <div className="text-sm font-medium text-white mb-0.5">下载 OC SuperBot</div>
             <div className="text-xs text-text-muted">桌面应用，双击打开即运行，内置日志面板，无需终端</div>
           </div>
           {release && (

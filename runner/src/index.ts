@@ -13,7 +13,7 @@ import { getPnLSummary, saveSnapshot, resetData } from './core/db.js'
 import { loadConfig, saveConfig } from './core/config.js'
 
 console.log(chalk.cyan('╔════════════════════════════════╗'))
-console.log(chalk.cyan('║      MEV Terminal Runner       ║'))
+console.log(chalk.cyan('║       OC SuperBot Runner       ║'))
 console.log(chalk.cyan('╚════════════════════════════════╝'))
 
 let cfg = loadConfig()

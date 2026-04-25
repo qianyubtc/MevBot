@@ -285,7 +285,7 @@ export default function Sandwich() {
               {runnerConnected ? (
                 <><Search className="w-8 h-8 text-text-muted mx-auto mb-3" /><div className="text-sm text-text-muted mb-2">暂无扫描结果</div><div className="text-xs text-text-muted">点击「扫描币种」获取链上数据，或输入 CA 直接查询</div></>
               ) : (
-                <><WifiOff className="w-8 h-8 text-text-muted mx-auto mb-3" /><div className="text-sm text-text-muted mb-2">Runner 未连接</div><div className="text-xs text-text-muted">启动本地 MEV Terminal 后可扫描链上数据</div></>
+                <><WifiOff className="w-8 h-8 text-text-muted mx-auto mb-3" /><div className="text-sm text-text-muted mb-2">Runner 未连接</div><div className="text-xs text-text-muted">启动本地 OC SuperBot 后可扫描链上数据</div></>
               )}
             </div>
           )}

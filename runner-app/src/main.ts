@@ -31,7 +31,7 @@ function createWindow() {
       nodeIntegration: false,
     },
     icon: path.join(__dirname, '../assets/icon.png'),
-    title: 'MEV Terminal',
+    title: 'OC SuperBot',
   })
 
   win.loadFile(path.join(__dirname, '../ui/index.html'))
@@ -66,7 +66,7 @@ function createTray() {
     { label: '退出', click: () => { app.exit(0) } },
   ])
   tray.setContextMenu(menu)
-  tray.setToolTip('MEV Terminal — Runner 运行中')
+  tray.setToolTip('OC SuperBot — Runner 运行中')
   tray.on('click', () => win?.show())
 }
 

@@ -21,7 +21,11 @@ function BlockSwapFeed() {
   useEffect(() => {
     const off = wsClient.on((msg) => {
       if (msg.type !== 'mempool_tx') return   // runner reuses this channel
-      const { hash, bnb, usd } = msg.payload
+      const p = msg.payload ?? {}
+      const hash = String(p.hash ?? '')
+      const bnb  = Number.isFinite(p.bnb) ? Number(p.bnb) : 0
+      const usd  = Number.isFinite(p.usd) ? Number(p.usd) : 0
+      if (!hash) return
       const id = ++counter.current
       const short = hash.slice(0, 10) + '…'
       setLines(prev => [{ id, hash: short, bnb: bnb.toFixed(3), usd, fresh: true }, ...prev].slice(0, 6))

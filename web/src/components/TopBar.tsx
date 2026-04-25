@@ -7,6 +7,7 @@ import { useState, useEffect } from 'react'
 const TITLES: Record<string, string> = {
   '/': '系统概览',
   '/sandwich': '夹子机器人',
+  '/backrun': '区块套利',
   '/arbitrage': '套利机器人',
   '/lp': 'LP 套利',
   '/sniper': '狙击机器人',
@@ -28,7 +29,7 @@ export default function TopBar() {
   return (
     <header className="h-14 flex items-center px-6 border-b border-bg-border bg-bg-surface/50 backdrop-blur-sm flex-shrink-0">
       <div className="flex-1">
-        <h1 className="text-sm font-semibold text-white">{TITLES[pathname] ?? 'MEV Terminal'}</h1>
+        <h1 className="text-sm font-semibold text-white">{TITLES[pathname] ?? 'OnChain SuperBot'}</h1>
       </div>
 
       <div className="flex items-center gap-4">
