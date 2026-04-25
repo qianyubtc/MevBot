@@ -335,6 +335,141 @@ ws.on(async (msg, client) => {
     return
   }
 
+  // ── MEV-protected single-tx swap ─────────────────────────
+  // User picks a token + BNB amount + buy/sell, we route the swap through
+  // Puissant so it never sits in the public mempool — no sandwich, no
+  // front-run. Single tx bundle: relay either includes it whole or drops
+  // it (no gas paid on drop).
+  if (type === 'protected_swap') {
+    cfg = loadConfig()
+    if (!cfg.privateKey) {
+      ws.send(client, { type: 'protected_swap_result', payload: { ok: false, error: '请先在设置页配置钱包私钥' } })
+      return
+    }
+    try {
+      const { token, side, amount, slippagePct, gasGwei } = payload as {
+        token: string; side: 'buy' | 'sell'; amount: number;
+        slippagePct: number; gasGwei: number;
+      }
+      if (!/^0x[a-fA-F0-9]{40}$/.test(token)) throw new Error('无效的 token 地址')
+      if (!Number.isFinite(amount) || amount <= 0) throw new Error('数量需要大于 0')
+      if (side !== 'buy' && side !== 'sell') throw new Error('side 必须是 buy / sell')
+
+      const { publicClient, walletClient } = buildClients(cfg.rpcUrl, cfg.privateKey, cfg.chain)
+      const { parseAbi, parseUnits, formatEther, formatUnits, encodeFunctionData, getAddress } = await import('viem')
+      const { PuissantClient } = await import('./core/puissant.js')
+
+      const WBNB     = '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c' as `0x${string}`
+      const ROUTER   = '0x10ED43C718714eb63d5aA57B78B54704E256024E' as `0x${string}`  // Pancake V2
+      const tokenAd  = getAddress(token as `0x${string}`)
+      const account  = walletClient.account!
+      const slip     = Math.max(0.1, Math.min(50, slippagePct ?? 1)) / 100
+      const gasPrice = parseUnits(String(Math.max(1, Math.min(20, gasGwei ?? 5))), 9)
+
+      const ROUTER_ABI = parseAbi([
+        'function getAmountsOut(uint256 amountIn, address[] path) view returns (uint256[] amounts)',
+        'function swapExactETHForTokensSupportingFeeOnTransferTokens(uint256 amountOutMin, address[] path, address to, uint256 deadline) payable',
+        'function swapExactTokensForETHSupportingFeeOnTransferTokens(uint256 amountIn, uint256 amountOutMin, address[] path, address to, uint256 deadline)',
+      ])
+      const ERC20_ABI = parseAbi([
+        'function balanceOf(address) view returns (uint256)',
+        'function allowance(address owner, address spender) view returns (uint256)',
+        'function approve(address spender, uint256 amount) returns (bool)',
+        'function decimals() view returns (uint8)',
+      ])
+
+      const puissant = new PuissantClient(walletClient, publicClient)
+      const deadline = BigInt(Math.floor(Date.now() / 1000) + 120)
+      const nonce = await publicClient.getTransactionCount({ address: account.address, blockTag: 'pending' })
+
+      let txData: `0x${string}`
+      let value = 0n
+      let approveTxNeeded = false
+      let approveTx: any = null
+
+      if (side === 'buy') {
+        const amountIn = parseUnits(amount.toFixed(6), 18)
+        const balance  = await publicClient.getBalance({ address: account.address })
+        const gasReserve = parseUnits('0.002', 18)  // leave room for gas
+        if (balance < amountIn + gasReserve) {
+          throw new Error(`BNB 余额不足：需要 ${formatEther(amountIn + gasReserve)}，当前 ${formatEther(balance)}`)
+        }
+        const quote = await publicClient.readContract({
+          address: ROUTER, abi: ROUTER_ABI, functionName: 'getAmountsOut',
+          args: [amountIn, [WBNB, tokenAd]],
+        }) as bigint[]
+        if (quote[1] === 0n) throw new Error('该 token 没有 BNB 流动性')
+        const minOut = quote[1] * BigInt(Math.floor((1 - slip) * 10000)) / 10000n
+        txData = encodeFunctionData({
+          abi: ROUTER_ABI, functionName: 'swapExactETHForTokensSupportingFeeOnTransferTokens',
+          args: [minOut, [WBNB, tokenAd], account.address, deadline],
+        })
+        value = amountIn
+      } else {
+        // SELL — need allowance + balance check
+        const decimals = await publicClient.readContract({
+          address: tokenAd, abi: ERC20_ABI, functionName: 'decimals',
+        }) as number
+        const amountIn = parseUnits(amount.toString(), decimals)
+        const bal = await publicClient.readContract({
+          address: tokenAd, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address],
+        }) as bigint
+        if (bal < amountIn) throw new Error(`token 余额不足：${formatUnits(bal, decimals)} < ${amount}`)
+        const quote = await publicClient.readContract({
+          address: ROUTER, abi: ROUTER_ABI, functionName: 'getAmountsOut',
+          args: [amountIn, [tokenAd, WBNB]],
+        }) as bigint[]
+        if (quote[1] === 0n) throw new Error('该 token 没有 BNB 流动性')
+        const minOut = quote[1] * BigInt(Math.floor((1 - slip) * 10000)) / 10000n
+
+        const allowance = await publicClient.readContract({
+          address: tokenAd, abi: ERC20_ABI, functionName: 'allowance',
+          args: [account.address, ROUTER],
+        }) as bigint
+        if (allowance < amountIn) {
+          approveTxNeeded = true
+          approveTx = {
+            to: tokenAd,
+            data: encodeFunctionData({
+              abi: ERC20_ABI, functionName: 'approve',
+              args: [ROUTER, (1n << 256n) - 1n],
+            }),
+            value: 0n, gas: 80_000n, gasPrice, nonce,
+          }
+        }
+        txData = encodeFunctionData({
+          abi: ROUTER_ABI, functionName: 'swapExactTokensForETHSupportingFeeOnTransferTokens',
+          args: [amountIn, minOut, [tokenAd, WBNB], account.address, deadline],
+        })
+      }
+
+      const swapTx = {
+        to: ROUTER, data: txData, value,
+        gas: 350_000n, gasPrice,
+        nonce: approveTxNeeded ? nonce + 1 : nonce,
+      }
+      const txs = approveTxNeeded ? [approveTx, swapTx] : [swapTx]
+
+      console.log(chalk.cyan(`[ProtectedSwap] → ${side} ${amount} on Pancake V2 via Puissant${approveTxNeeded ? ' (含 approve)' : ''}`))
+      const result = await puissant.submitBundle(txs, { ttlSeconds: 30, acceptRevertingHashes: [] })
+      if (!result.ok) {
+        ws.send(client, { type: 'protected_swap_result', payload: { ok: false, error: result.error ?? 'relay 拒绝' } })
+        return
+      }
+      const swapHash = result.txHashes[result.txHashes.length - 1]
+      ws.send(client, {
+        type: 'protected_swap_result',
+        payload: { ok: true, txHash: swapHash, bundleId: result.bundleId ?? null },
+      })
+      console.log(chalk.green(`[ProtectedSwap] ✓ 已提交 bundle: ${result.bundleId ?? '(null)'} swap=${swapHash}`))
+    } catch (e: any) {
+      const msg = e?.shortMessage ?? e?.message ?? String(e)
+      console.warn(chalk.yellow(`[ProtectedSwap] ✗ ${msg}`))
+      ws.send(client, { type: 'protected_swap_result', payload: { ok: false, error: msg } })
+    }
+    return
+  }
+
   // ── Scanner ──────────────────────────────────────────────
   if (type === 'scan') {
     console.log(chalk.cyan(`[Runner] 扫描: ${payload.strategy}`))

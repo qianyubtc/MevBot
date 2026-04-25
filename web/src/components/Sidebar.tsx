@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard, Sword, ArrowLeftRight, Droplets,
-  Crosshair, Zap, Repeat, Settings, Activity, Download,
+  Crosshair, Zap, Repeat, Settings, Activity, Download, ShieldCheck,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useStore } from '@/store'
@@ -14,6 +14,7 @@ const NAV = [
   { to: '/lp', icon: Droplets, label: 'LP 套利' },
   { to: '/sniper', icon: Crosshair, label: '狙击' },
   { to: '/liquidation', icon: Zap, label: '清算' },
+  { to: '/protected-swap', icon: ShieldCheck, label: '保护下单' },
 ]
 
 export default function Sidebar() {

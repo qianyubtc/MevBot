@@ -169,13 +169,13 @@ export default function Sniper() {
           <div className="rounded-xl bg-bg-surface border border-bg-border p-4 space-y-2">
             <div className="flex items-center gap-2">
               <ShieldCheck className="w-4 h-4 text-primary" />
-              <span className="text-sm font-medium text-white">蜜罐检测策略</span>
+              <span className="text-sm font-medium text-white">入场前的安全过滤</span>
             </div>
             <ul className="text-xs text-text-muted space-y-1 leading-relaxed pl-5 list-disc">
-              <li>用 router.getAmountsOut 模拟买入 → 卖回，两次报价都不能为零</li>
-              <li>round-trip 损耗 = (1 - 卖回 BNB / 买入 BNB) × 100%，超过设定阈值则跳过</li>
-              <li>真实买入用 <span className="font-mono">supportingFeeOnTransfer</span> 路径，兼容反射税 / 通缩 token</li>
-              <li>买后立刻读 token balance，余额为 0 = 蜜罐确认（极少数过筛但实际 transfer 拦截的情况）</li>
+              <li><span className="text-white">蜜罐</span>：router.getAmountsOut 双向报价 + 真买后余额验证（兼容反射税）</li>
+              <li><span className="text-white">税率上限</span>：round-trip 损耗超过阈值就跳过，防重税 token</li>
+              <li><span className="text-white">Owner 弃权</span>：读 owner() 检查是否 0x0/0xdead — 防 deployer 改税 / 拉黑（可选，默认关）</li>
+              <li><span className="text-white">LP 燃毁</span>：pair token 在 0xdead/0x0 的占比 — 防 deployer 抽 LP 跑路（可选，默认关）</li>
             </ul>
           </div>
 
@@ -214,6 +214,33 @@ export default function Sniper() {
                 </div>
               )
             })}
+
+            <div className="border-t border-bg-border pt-3 space-y-3">
+              <div className="text-xs text-text-muted">防 rug 过滤（可选）</div>
+
+              <label className="flex items-center justify-between text-xs cursor-pointer">
+                <span className="text-text-muted">要求 owner 已弃权</span>
+                <input type="checkbox" checked={cfg.requireRenounced}
+                  onChange={(e) => updateStrategyConfig('sniper', { requireRenounced: e.target.checked })}
+                  className="w-3.5 h-3.5 accent-primary cursor-pointer" />
+              </label>
+
+              <div>
+                <div className="flex justify-between text-xs mb-1.5">
+                  <span className="text-text-muted">最低 LP 燃毁 (%)</span>
+                  <span className="font-mono text-white">
+                    {cfg.minLpBurnedPct === 0 ? '关闭' : `${cfg.minLpBurnedPct}%`}
+                  </span>
+                </div>
+                <input type="range" min={0} max={100} step={5} value={cfg.minLpBurnedPct}
+                  onChange={(e) => updateStrategyConfig('sniper', { minLpBurnedPct: Number(e.target.value) })}
+                  className="w-full h-1.5 bg-bg-border rounded-full appearance-none cursor-pointer accent-primary" />
+                <div className="text-[10px] text-text-dim mt-1 leading-relaxed">
+                  0 = 关闭。50%+ 即认为 LP 已锁，deployer 无法抽走流动性。
+                </div>
+              </div>
+            </div>
+
             <div className="text-xs text-text-muted opacity-60 pt-2 border-t border-bg-border leading-relaxed">
               建议起步：流动性 $30K · 单笔 $20 · 止盈 50% · 止损 20% · 税率 25%。
               首次跑可以把单笔调到 $5 试水。

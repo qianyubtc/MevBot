@@ -32,6 +32,15 @@ const PAIR_ABI = parseAbi([
   'function token0() view returns (address)',
 ])
 
+// Pancake V3 quoter (QuoterV2-style). `quoteExactInputSingle` is technically
+// non-view because it executes the swap then reverts to bubble up the result,
+// but eth_call handles that pattern fine — viem's readContract works.
+const V3_QUOTER       = '0xB048Bbc1Ee6b733FFfCFb9e9CeF7375518e25997' as Address
+const V3_FEE_TIERS    = [100, 500, 2500, 10000] as const  // 0.01% / 0.05% / 0.25% / 1%
+const V3_QUOTER_ABI = parseAbi([
+  'function quoteExactInputSingle((address tokenIn, address tokenOut, uint256 amountIn, uint24 fee, uint160 sqrtPriceLimitX96)) returns (uint256 amountOut, uint160 sqrtPriceX96After, uint32 initializedTicksCrossed, uint256 gasEstimate)',
+])
+
 const FEE_NUM = 9975n
 const FEE_DEN = 10000n
 
@@ -75,6 +84,17 @@ interface PoolState {
   pair:         Address
   reserveBNB:   bigint
   reserveToken: bigint
+}
+
+// Synthetic "pool" for V3 — we don't have constant-product reserves, just a
+// quoter we can ping. We carry the implied price (BNB per token) and the fee
+// tier we found liquidity at. Cannot be used as a leg in proxy execution
+// because the proxy targets V2 routers; included for **detection** so users
+// see when V3 has a better price than the V2 spread we're trading on.
+interface V3Quote {
+  name:        'PancakeV3'
+  fee:         number          // pool fee in hundredths of a bp (100 = 0.01%)
+  priceBNBPerToken: number     // price implied by quoter at our trade size
 }
 
 interface TokenPairs {
@@ -270,7 +290,29 @@ export class ArbitrageStrategy {
       for (const tp of this.tokenPairs) {
         const ev = await this.evaluateToken(tp)
         if (!ev) continue
-        if (!best || ev.netUSD > best.netUSD) best = { token: tp, ...ev }
+
+        // Surface V3-only opportunities (non-executable in this version) so
+        // the UI can show users where the real price action is. We tag them
+        // with `executable: false` and netProfit: 0 to signal monitor-only.
+        if (ev.v3Hint && ev.netUSD < this.config.minProfitUSD &&
+            ev.v3Hint.spreadVsBestV2Pct >= this.config.minSpreadPct * 2) {
+          this.ws.broadcast({
+            type: 'opportunity',
+            payload: {
+              id: randomUUID(), strategy: 'arbitrage',
+              token: `${tp.symbol} [V3@${(ev.v3Hint.fee / 10000).toFixed(2)}%]`,
+              tokenAddress: tp.address, chain: 'BSC',
+              profitUSD: 0, profitNative: 0, gasUSD: 0, netProfit: 0,
+              timestamp: Date.now(), executable: false,
+              note: `V3 vs V2 价差 ${ev.v3Hint.spreadVsBestV2Pct.toFixed(2)}% — 当前版本未集成 V3 执行`,
+            },
+          })
+        }
+
+        // V2-V2 executable scoring
+        if (ev.netUSD > 0 && (!best || ev.netUSD > best.netUSD)) {
+          best = { token: tp, buy: ev.buy, sell: ev.sell, spread: ev.spread, netUSD: ev.netUSD }
+        }
       }
 
       if (best && best.netUSD >= this.config.minProfitUSD) {
@@ -292,9 +334,12 @@ export class ArbitrageStrategy {
 
   // Returns null if pool data unavailable, spread below threshold, or sized
   // trade unprofitable. Returns full plan if it's a real opportunity.
+  // Also detects V3 cross-DEX spreads (read-only; not executed because the
+  // proxy targets V2 routers).
   private async evaluateToken(tp: TokenPairs): Promise<{
     buy: PoolState; sell: PoolState; spread: number; netUSD: number;
     amountIn: bigint; minFrontOut: bigint; minBackOut: bigint;
+    v3Hint?: { fee: number; priceBNBPerToken: number; spreadVsBestV2Pct: number };
   } | null> {
     if (!tp.pancake || !tp.biswap) return null
 
@@ -309,24 +354,51 @@ export class ArbitrageStrategy {
     const minP   = Math.min(priceA, priceB)
     const maxP   = Math.max(priceA, priceB)
     const spread = ((maxP - minP) / minP) * 100
-    if (spread < this.config.minSpreadPct) return null
 
+    // Size the would-be trade.
     const buy  = priceA < priceB ? poolA : poolB
     const sell = priceA < priceB ? poolB : poolA
-
     const budgetBNB = this.config.executionAmountUSD / this.bnbPrice
     const maxByImpactBNB = Number(formatEther(buy.reserveBNB)) * 0.005
     const sizeBNB = Math.min(budgetBNB, maxByImpactBNB)
     if (sizeBNB <= 0.001) return null
-
     const amountIn = parseUnits(sizeBNB.toFixed(6), 18)
+
+    // Probe V3 in parallel with the V2 calc, only if either V2 looks
+    // interesting at all OR we want a sanity check. We do it unconditionally
+    // here so the UI gets a complete cross-DEX picture; cost is one
+    // multicall per token per block, which is cheap.
+    const v3 = await this.loadV3Quote(tp.address, amountIn, 'buy').catch(() => null)
+    let v3Hint: { fee: number; priceBNBPerToken: number; spreadVsBestV2Pct: number } | undefined
+    if (v3) {
+      const bestV2 = Math.min(priceA, priceB)
+      const spreadV3 = Math.abs(v3.priceBNBPerToken - bestV2) / Math.min(v3.priceBNBPerToken, bestV2) * 100
+      v3Hint = { fee: v3.fee, priceBNBPerToken: v3.priceBNBPerToken, spreadVsBestV2Pct: spreadV3 }
+    }
+
+    if (spread < this.config.minSpreadPct) {
+      // No V2/V2 spread — but if V3 vs best V2 is meaningfully different we
+      // still surface it so the UI can show the user where price is moving.
+      if (v3Hint && v3Hint.spreadVsBestV2Pct >= this.config.minSpreadPct * 2) {
+        return {
+          buy, sell, spread: v3Hint.spreadVsBestV2Pct,
+          netUSD: 0,                  // not executable, no claim of profit
+          amountIn, minFrontOut: 0n, minBackOut: 0n, v3Hint,
+        }
+      }
+      return null
+    }
+
     const tokenOut = getAmountOut(amountIn,   buy.reserveBNB,  buy.reserveToken)
     if (tokenOut === 0n) return null
     const bnbOut   = getAmountOut(tokenOut, sell.reserveToken, sell.reserveBNB)
 
     const profitBNB = Number(formatEther(bnbOut)) - sizeBNB
 
-    const gasPriceWei = parseUnits(String(Math.min(this.config.maxGasGwei, 5)), 9)
+    // Respect user's slider — clamping to a floor of 1 Gwei so we don't
+    // submit a tx that gets ignored. Previously this was hardcoded at 5
+    // which silently overrode anything the user set on the page.
+    const gasPriceWei = parseUnits(String(Math.max(this.config.maxGasGwei, 1)), 9)
     const gasCostBNB  = Number(formatEther((GAS_FRONTRUN + GAS_BACKRUN) * gasPriceWei))
     const gasCostUSD  = gasCostBNB * this.bnbPrice
     const netUSD = profitBNB * this.bnbPrice - gasCostUSD
@@ -335,7 +407,47 @@ export class ArbitrageStrategy {
     const minFrontOut = tokenOut * BigInt(Math.floor((1 - slip)     * 10000)) / 10000n
     const minBackOut  = bnbOut   * BigInt(Math.floor((1 - slip * 2) * 10000)) / 10000n
 
-    return { buy, sell, spread, netUSD, amountIn, minFrontOut, minBackOut }
+    return { buy, sell, spread, netUSD, amountIn, minFrontOut, minBackOut, v3Hint }
+  }
+
+  // Probe Pancake V3 for the best price across all fee tiers. We try each
+  // tier in parallel and pick the highest amountOut. Tiers without an
+  // initialised pool revert; we silently filter those.
+  //
+  // sqrtPriceLimitX96=0 means "no price limit" — quoter returns the natural
+  // result given current liquidity. The quoter's amountOut already accounts
+  // for the pool fee, so the implied price is the after-fee execution price.
+  private async loadV3Quote(token: Address, sizeBNB: bigint, direction: 'buy' | 'sell'): Promise<V3Quote | null> {
+    // For the BUY side: in=WBNB, out=token, sizeBNB is BNB amount.
+    // For the SELL side: in=token, out=WBNB. We don't currently call this for
+    // sell — kept symmetric in case we expand. For our "best price" purpose,
+    // buy-side is sufficient since price discovery is the same in both.
+    const tokenIn  = direction === 'buy' ? WBNB  : token
+    const tokenOut = direction === 'buy' ? token : WBNB
+
+    const probes = await Promise.allSettled(
+      V3_FEE_TIERS.map(fee => this.publicClient.readContract({
+        address: V3_QUOTER, abi: V3_QUOTER_ABI, functionName: 'quoteExactInputSingle',
+        args: [{ tokenIn, tokenOut, amountIn: sizeBNB, fee, sqrtPriceLimitX96: 0n }],
+      }) as Promise<readonly [bigint, bigint, number, bigint]>)
+    )
+    let best: V3Quote | null = null
+    for (let i = 0; i < probes.length; i++) {
+      const r = probes[i]
+      if (r.status !== 'fulfilled') continue
+      const amountOut = r.value[0]
+      if (amountOut === 0n) continue
+      // Implied price (BNB per token) at our trade size.
+      const price = direction === 'buy'
+        ? Number(formatEther(sizeBNB)) / Number(formatUnits(amountOut, 18))
+        : Number(formatEther(amountOut)) / Number(formatUnits(sizeBNB, 18))
+      if (!Number.isFinite(price) || price <= 0) continue
+      if (!best || price < best.priceBNBPerToken) {
+        // For the buy direction, lower BNB-per-token = better price.
+        best = { name: 'PancakeV3', fee: V3_FEE_TIERS[i], priceBNBPerToken: price }
+      }
+    }
+    return best
   }
 
   private async loadPool(
@@ -376,7 +488,7 @@ export class ArbitrageStrategy {
         address: account.address, blockTag: 'pending',
       })
 
-      const gasPriceWei = parseUnits(String(Math.min(this.config.maxGasGwei, 5)), 9)
+      const gasPriceWei = parseUnits(String(Math.max(this.config.maxGasGwei, 1)), 9)
 
       const frontData = encodeFunctionData({
         abi: SANDWICH_PROXY_ABI, functionName: 'frontrun',

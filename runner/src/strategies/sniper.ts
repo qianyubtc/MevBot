@@ -44,6 +44,18 @@ const ERC20_ABI = parseAbi([
   'function allowance(address owner, address spender) view returns (uint256)',
   'function symbol() view returns (string)',
   'function decimals() view returns (uint8)',
+  'function totalSupply() view returns (uint256)',
+])
+
+// Best-effort anti-rug reads. Both functions only exist on tokens whose
+// authors deliberately exposed them — fine, missing = unknown, not a fail.
+const OWNED_ABI = parseAbi([
+  'function owner() view returns (address)',
+])
+
+const DEAD_ADDRS = new Set([
+  '0x0000000000000000000000000000000000000000',
+  '0x000000000000000000000000000000000000dead',
 ])
 
 const PANCAKE_ROUTER = '0x10ED43C718714eb63d5aA57B78B54704E256024E' as Address
@@ -58,6 +70,10 @@ export interface SniperConfig {
   stopLossPct:     number
   /** Reject if simulated tax (sellOut/buyAmount) exceeds this %. */
   maxTaxPct?:      number
+  /** Reject if `owner()` is set and not renounced (0x0/dead). Default: false (informational only). */
+  requireRenounced?: boolean
+  /** Reject if LP burned% < threshold. 0 = ignore. Typical safe threshold: 50. */
+  minLpBurnedPct?: number
   rpcUrl?:         string
 }
 
@@ -205,7 +221,25 @@ export class SniperStrategy {
       `[Sniper] ⚡ 新池: ${symbol} (${target.slice(0,10)}…) 流动性 $${liqUSD.toFixed(0)}`
     ))
 
-    // 3. Honeypot screen
+    // 3. Anti-rug heuristics (best-effort, all reads non-blocking by default)
+    const safety = await this.antiRugCheck(target, pair)
+    const safetyLine = [
+      `owner=${safety.ownerRenounced === undefined ? '?' : safety.ownerRenounced ? '已弃权' : '未弃权'}`,
+      `LP燃毁=${safety.lpBurnedPct === undefined ? '?' : safety.lpBurnedPct.toFixed(0) + '%'}`,
+    ].join(' · ')
+    console.log(chalk.dim(`[Sniper]   防 rug: ${safetyLine}`))
+
+    if (this.config.requireRenounced && safety.ownerRenounced === false) {
+      console.log(chalk.red(`[Sniper] ✗ 跳过 ${symbol}: owner 未弃权 (${safety.ownerAddress?.slice(0,10)}…)`))
+      return
+    }
+    const minBurn = this.config.minLpBurnedPct ?? 0
+    if (minBurn > 0 && (safety.lpBurnedPct ?? 0) < minBurn) {
+      console.log(chalk.red(`[Sniper] ✗ 跳过 ${symbol}: LP 燃毁 ${(safety.lpBurnedPct ?? 0).toFixed(1)}% < ${minBurn}%`))
+      return
+    }
+
+    // 4. Honeypot screen
     const buyAmountBNB = Math.min(
       this.config.maxBuyUSD / this.bnbPrice,
       Number(formatEther(reserveBNB)) * 0.01,  // ≤ 1% of pool
@@ -216,6 +250,7 @@ export class SniperStrategy {
     }
     const buyWei = parseUnits(buyAmountBNB.toFixed(6), 18)
 
+    // (5) Honeypot probe
     const safe = await this.honeypotCheck(target, buyWei)
     if (!safe.ok) {
       console.log(chalk.red(`[Sniper] ✗ 蜜罐/异常 ${symbol}: ${safe.reason}`))
@@ -265,6 +300,51 @@ export class SniperStrategy {
     } catch (e: any) {
       return { ok: false, reason: cleanError(e) }
     }
+  }
+
+  // ── Anti-rug heuristics ─────────────────────────────────────────────────
+  // Two cheap on-chain reads that catch the most common low-effort rugs:
+  //   • owner() → if exists and not 0x0/0xdead, the deployer can still flip
+  //     tax / blacklist / pause. Real "fair launch" tokens renounce.
+  //   • LP burn % → balanceOf(0xdead, pair) / totalSupply(pair). High burn
+  //     means the deployer can't pull liquidity.
+  // Both are advisory by default — gating on them is opt-in via config.
+  private async antiRugCheck(token: Address, pair: Address): Promise<{
+    ownerAddress?: Address; ownerRenounced?: boolean;
+    lpBurnedPct?: number;
+  }> {
+    const out: { ownerAddress?: Address; ownerRenounced?: boolean; lpBurnedPct?: number } = {}
+
+    // Owner read — many tokens don't expose it, that's fine.
+    try {
+      const owner = await this.publicClient.readContract({
+        address: token, abi: OWNED_ABI, functionName: 'owner',
+      }) as Address
+      out.ownerAddress = owner
+      out.ownerRenounced = DEAD_ADDRS.has(owner.toLowerCase())
+    } catch { /* unknown — leave undefined */ }
+
+    // LP-burn % — pair token total supply vs amount held by dead/zero addrs.
+    // We sum balances at both 0x0 and 0xdead since teams use either.
+    try {
+      const [supply, deadBal, zeroBal] = await Promise.all([
+        this.publicClient.readContract({ address: pair, abi: ERC20_ABI, functionName: 'totalSupply' }) as Promise<bigint>,
+        this.publicClient.readContract({
+          address: pair, abi: ERC20_ABI, functionName: 'balanceOf',
+          args: ['0x000000000000000000000000000000000000dEaD'],
+        }) as Promise<bigint>,
+        this.publicClient.readContract({
+          address: pair, abi: ERC20_ABI, functionName: 'balanceOf',
+          args: ['0x0000000000000000000000000000000000000000'],
+        }) as Promise<bigint>,
+      ])
+      if (supply > 0n) {
+        const burned = deadBal + zeroBal
+        out.lpBurnedPct = Number((burned * 10000n) / supply) / 100
+      }
+    } catch { /* leave undefined */ }
+
+    return out
   }
 
   // ── Execute on-chain buy ────────────────────────────────────────────────

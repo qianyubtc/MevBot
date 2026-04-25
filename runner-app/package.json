@@ -1,6 +1,6 @@
 {
   "name": "oc-superbot-app",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "OC SuperBot — On-chain MEV trading desktop app",
   "main": "dist/main.js",
   "private": true,

@@ -19,7 +19,7 @@ const DEFAULT_WHITELIST = [
   { address: '0xCC42724C6683B7E57334c4E856f4c9965ED682bD', symbol: 'MATIC' },
 ] as const
 
-interface OppLine { id: string; sym: string; net: number; t: number }
+interface OppLine { id: string; sym: string; net: number; t: number; executable: boolean; note?: string }
 
 function OppFeed() {
   const [lines, setLines] = useState<OppLine[]>([])
@@ -27,7 +27,12 @@ function OppFeed() {
     if (msg.type !== 'opportunity') return
     const p = msg.payload ?? {}
     if (p.strategy !== 'arbitrage') return
-    setLines(prev => [{ id: String(p.id), sym: String(p.token ?? '?'), net: Number(p.profitUSD ?? 0), t: Date.now() }, ...prev].slice(0, 8))
+    setLines(prev => [{
+      id: String(p.id), sym: String(p.token ?? '?'),
+      net: Number(p.profitUSD ?? 0), t: Date.now(),
+      executable: p.executable !== false,
+      note: typeof p.note === 'string' ? p.note : undefined,
+    }, ...prev].slice(0, 10))
   }), [])
   return (
     <div className="rounded-lg bg-bg-elevated border border-bg-border p-3 space-y-1.5">
@@ -39,11 +44,23 @@ function OppFeed() {
         <div className="text-xs text-text-muted opacity-40 font-mono py-1">等待跨 DEX 价差出现 …</div>
       ) : (
         lines.map(l => (
-          <div key={l.id} className="flex items-center justify-between font-mono text-xs">
-            <span className="text-white">{l.sym}</span>
-            <span className={l.net >= 0 ? 'text-success' : 'text-danger'}>
-              {l.net >= 0 ? '+' : ''}${l.net.toFixed(2)}
-            </span>
+          <div key={l.id} className="font-mono text-xs space-y-0.5">
+            <div className="flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <span className="text-white">{l.sym}</span>
+                {!l.executable && (
+                  <span className="px-1.5 py-0.5 rounded bg-warning/10 border border-warning/30 text-[10px] text-warning">仅监控</span>
+                )}
+              </span>
+              {l.executable ? (
+                <span className={l.net >= 0 ? 'text-success' : 'text-danger'}>
+                  {l.net >= 0 ? '+' : ''}${l.net.toFixed(2)}
+                </span>
+              ) : (
+                <span className="text-text-dim text-[10px]">V3 信号</span>
+              )}
+            </div>
+            {l.note && <div className="text-[10px] text-text-dim pl-1 truncate">{l.note}</div>}
           </div>
         ))
       )}
@@ -151,9 +168,11 @@ export default function Arbitrage() {
       <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-bg-surface border border-bg-border text-text-muted text-xs leading-relaxed">
         <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-primary" />
         <span>
-          原理：同一 token 在 PancakeSwap 和 BiSwap 上的瞬时价格不同步（任意一边发生大单都会让另一边滞后几秒）。
+          原理：同一 token 在 PancakeSwap V2 和 BiSwap V2 上的瞬时价格不同步（任意一边发生大单都会让另一边滞后几秒）。
           策略每出一个区块就采一次价，差距大于阈值就用 Puissant 私有 bundle 同时买/卖。
           <span className="text-primary/80"> bundle 失败不亏 gas</span> — 中继发现亏损会直接丢弃。
+          {' '}另外引擎现在也读 <span className="text-white">Pancake V3</span> 报价做参考，发现 V3 vs V2 显著价差时会以「仅监控」信号方式推送，
+          但本版本不在 V3 上下单（V3 执行接入下个版本）。
         </span>
       </div>
 

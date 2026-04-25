@@ -69,6 +69,10 @@ export interface StrategyConfig {
     stopLossPct: number
     /** Reject if simulated round-trip tax exceeds this %. */
     maxTaxPct: number
+    /** If true, reject tokens whose owner() is set and not 0x0/0xdead. */
+    requireRenounced: boolean
+    /** Reject if LP burned % below this threshold. 0 disables the check. */
+    minLpBurnedPct: number
     enabled: boolean
   }
   liquidation: {
@@ -171,6 +175,8 @@ const defaultStrategyConfig: StrategyConfig = {
     targetGainPct: 50,
     stopLossPct: 20,
     maxTaxPct: 25,
+    requireRenounced: false,
+    minLpBurnedPct: 0,
     enabled: false,
   },
   liquidation: {

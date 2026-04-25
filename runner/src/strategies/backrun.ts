@@ -369,8 +369,8 @@ export class BackrunStrategy {
     const profitBNB = Number(formatEther(bnbOutEff)) - sizeBNB
 
     // Gas cost — two txs via Puissant. BSC typical gasPrice is 1-3 gwei.
-    // We pay priority to win block N+1 top slot; 5 gwei usually suffices.
-    const gasPriceWei = parseUnits('5', 9)
+    // Respect user's `maxGasGwei` slider — was hardcoded at 5 before.
+    const gasPriceWei = parseUnits(String(Math.max(this.config.maxGasGwei, 1)), 9)
     const gasCostBNB  = Number(formatEther((GAS_FRONTRUN + GAS_BACKRUN) * gasPriceWei))
     const gasCostUSD  = gasCostBNB * this.bnbPrice
     const netProfitUSD = profitBNB * this.bnbPrice - gasCostUSD

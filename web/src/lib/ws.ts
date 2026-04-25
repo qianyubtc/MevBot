@@ -12,6 +12,7 @@ export type WsMessage =
   | { type: 'mempool_tx'; payload: { hash: string; bnb: number; usd: number } }
   | { type: 'lp_pools'; payload: { pools: LpPool[]; bnbPrice: number; ts: number } }
   | { type: 'venus_health'; payload: { accounts: VenusAccount[]; ts: number } }
+  | { type: 'protected_swap_result'; payload: { ok: boolean; txHash?: string; bundleId?: string | null; error?: string } }
 
 export interface LpPool {
   sym: string
@@ -47,6 +48,10 @@ export interface Opportunity {
   gasUSD: number
   netProfit: number
   timestamp: number
+  /** When false, this is a monitor-only signal (e.g. V3 detection without V3 execution). */
+  executable?: boolean
+  /** Optional human-readable note shown alongside the opportunity in the UI. */
+  note?: string
 }
 
 export interface Trade {

@@ -7,6 +7,7 @@ import Arbitrage from '@/pages/Arbitrage'
 import LPArbitrage from '@/pages/LPArbitrage'
 import Sniper from '@/pages/Sniper'
 import Liquidation from '@/pages/Liquidation'
+import ProtectedSwap from '@/pages/ProtectedSwap'
 import Settings from '@/pages/Settings'
 import Download from '@/pages/Download'
 
@@ -22,6 +23,7 @@ export default function App() {
           <Route path="lp" element={<LPArbitrage />} />
           <Route path="sniper" element={<Sniper />} />
           <Route path="liquidation" element={<Liquidation />} />
+          <Route path="protected-swap" element={<ProtectedSwap />} />
           <Route path="settings" element={<Settings />} />
           <Route path="download" element={<Download />} />
         </Route>

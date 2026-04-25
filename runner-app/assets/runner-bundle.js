@@ -437,6 +437,522 @@ var require_cli_options = __commonJS({
   }
 });
 
+// runner/node_modules/chalk/source/vendor/ansi-styles/index.js
+function assembleStyles() {
+  const codes = /* @__PURE__ */ new Map();
+  for (const [groupName, group] of Object.entries(styles)) {
+    for (const [styleName, style] of Object.entries(group)) {
+      styles[styleName] = {
+        open: `\x1B[${style[0]}m`,
+        close: `\x1B[${style[1]}m`
+      };
+      group[styleName] = styles[styleName];
+      codes.set(style[0], style[1]);
+    }
+    Object.defineProperty(styles, groupName, {
+      value: group,
+      enumerable: false
+    });
+  }
+  Object.defineProperty(styles, "codes", {
+    value: codes,
+    enumerable: false
+  });
+  styles.color.close = "\x1B[39m";
+  styles.bgColor.close = "\x1B[49m";
+  styles.color.ansi = wrapAnsi16();
+  styles.color.ansi256 = wrapAnsi256();
+  styles.color.ansi16m = wrapAnsi16m();
+  styles.bgColor.ansi = wrapAnsi16(ANSI_BACKGROUND_OFFSET);
+  styles.bgColor.ansi256 = wrapAnsi256(ANSI_BACKGROUND_OFFSET);
+  styles.bgColor.ansi16m = wrapAnsi16m(ANSI_BACKGROUND_OFFSET);
+  Object.defineProperties(styles, {
+    rgbToAnsi256: {
+      value(red, green, blue) {
+        if (red === green && green === blue) {
+          if (red < 8) {
+            return 16;
+          }
+          if (red > 248) {
+            return 231;
+          }
+          return Math.round((red - 8) / 247 * 24) + 232;
+        }
+        return 16 + 36 * Math.round(red / 255 * 5) + 6 * Math.round(green / 255 * 5) + Math.round(blue / 255 * 5);
+      },
+      enumerable: false
+    },
+    hexToRgb: {
+      value(hex) {
+        const matches = /[a-f\d]{6}|[a-f\d]{3}/i.exec(hex.toString(16));
+        if (!matches) {
+          return [0, 0, 0];
+        }
+        let [colorString] = matches;
+        if (colorString.length === 3) {
+          colorString = [...colorString].map((character) => character + character).join("");
+        }
+        const integer = Number.parseInt(colorString, 16);
+        return [
+          /* eslint-disable no-bitwise */
+          integer >> 16 & 255,
+          integer >> 8 & 255,
+          integer & 255
+          /* eslint-enable no-bitwise */
+        ];
+      },
+      enumerable: false
+    },
+    hexToAnsi256: {
+      value: (hex) => styles.rgbToAnsi256(...styles.hexToRgb(hex)),
+      enumerable: false
+    },
+    ansi256ToAnsi: {
+      value(code) {
+        if (code < 8) {
+          return 30 + code;
+        }
+        if (code < 16) {
+          return 90 + (code - 8);
+        }
+        let red;
+        let green;
+        let blue;
+        if (code >= 232) {
+          red = ((code - 232) * 10 + 8) / 255;
+          green = red;
+          blue = red;
+        } else {
+          code -= 16;
+          const remainder = code % 36;
+          red = Math.floor(code / 36) / 5;
+          green = Math.floor(remainder / 6) / 5;
+          blue = remainder % 6 / 5;
+        }
+        const value = Math.max(red, green, blue) * 2;
+        if (value === 0) {
+          return 30;
+        }
+        let result = 30 + (Math.round(blue) << 2 | Math.round(green) << 1 | Math.round(red));
+        if (value === 2) {
+          result += 60;
+        }
+        return result;
+      },
+      enumerable: false
+    },
+    rgbToAnsi: {
+      value: (red, green, blue) => styles.ansi256ToAnsi(styles.rgbToAnsi256(red, green, blue)),
+      enumerable: false
+    },
+    hexToAnsi: {
+      value: (hex) => styles.ansi256ToAnsi(styles.hexToAnsi256(hex)),
+      enumerable: false
+    }
+  });
+  return styles;
+}
+var ANSI_BACKGROUND_OFFSET, wrapAnsi16, wrapAnsi256, wrapAnsi16m, styles, modifierNames, foregroundColorNames, backgroundColorNames, colorNames, ansiStyles, ansi_styles_default;
+var init_ansi_styles = __esm({
+  "runner/node_modules/chalk/source/vendor/ansi-styles/index.js"() {
+    ANSI_BACKGROUND_OFFSET = 10;
+    wrapAnsi16 = (offset = 0) => (code) => `\x1B[${code + offset}m`;
+    wrapAnsi256 = (offset = 0) => (code) => `\x1B[${38 + offset};5;${code}m`;
+    wrapAnsi16m = (offset = 0) => (red, green, blue) => `\x1B[${38 + offset};2;${red};${green};${blue}m`;
+    styles = {
+      modifier: {
+        reset: [0, 0],
+        // 21 isn't widely supported and 22 does the same thing
+        bold: [1, 22],
+        dim: [2, 22],
+        italic: [3, 23],
+        underline: [4, 24],
+        overline: [53, 55],
+        inverse: [7, 27],
+        hidden: [8, 28],
+        strikethrough: [9, 29]
+      },
+      color: {
+        black: [30, 39],
+        red: [31, 39],
+        green: [32, 39],
+        yellow: [33, 39],
+        blue: [34, 39],
+        magenta: [35, 39],
+        cyan: [36, 39],
+        white: [37, 39],
+        // Bright color
+        blackBright: [90, 39],
+        gray: [90, 39],
+        // Alias of `blackBright`
+        grey: [90, 39],
+        // Alias of `blackBright`
+        redBright: [91, 39],
+        greenBright: [92, 39],
+        yellowBright: [93, 39],
+        blueBright: [94, 39],
+        magentaBright: [95, 39],
+        cyanBright: [96, 39],
+        whiteBright: [97, 39]
+      },
+      bgColor: {
+        bgBlack: [40, 49],
+        bgRed: [41, 49],
+        bgGreen: [42, 49],
+        bgYellow: [43, 49],
+        bgBlue: [44, 49],
+        bgMagenta: [45, 49],
+        bgCyan: [46, 49],
+        bgWhite: [47, 49],
+        // Bright color
+        bgBlackBright: [100, 49],
+        bgGray: [100, 49],
+        // Alias of `bgBlackBright`
+        bgGrey: [100, 49],
+        // Alias of `bgBlackBright`
+        bgRedBright: [101, 49],
+        bgGreenBright: [102, 49],
+        bgYellowBright: [103, 49],
+        bgBlueBright: [104, 49],
+        bgMagentaBright: [105, 49],
+        bgCyanBright: [106, 49],
+        bgWhiteBright: [107, 49]
+      }
+    };
+    modifierNames = Object.keys(styles.modifier);
+    foregroundColorNames = Object.keys(styles.color);
+    backgroundColorNames = Object.keys(styles.bgColor);
+    colorNames = [...foregroundColorNames, ...backgroundColorNames];
+    ansiStyles = assembleStyles();
+    ansi_styles_default = ansiStyles;
+  }
+});
+
+// runner/node_modules/chalk/source/vendor/supports-color/index.js
+function hasFlag(flag, argv = globalThis.Deno ? globalThis.Deno.args : import_node_process.default.argv) {
+  const prefix = flag.startsWith("-") ? "" : flag.length === 1 ? "-" : "--";
+  const position = argv.indexOf(prefix + flag);
+  const terminatorPosition = argv.indexOf("--");
+  return position !== -1 && (terminatorPosition === -1 || position < terminatorPosition);
+}
+function envForceColor() {
+  if ("FORCE_COLOR" in env) {
+    if (env.FORCE_COLOR === "true") {
+      return 1;
+    }
+    if (env.FORCE_COLOR === "false") {
+      return 0;
+    }
+    return env.FORCE_COLOR.length === 0 ? 1 : Math.min(Number.parseInt(env.FORCE_COLOR, 10), 3);
+  }
+}
+function translateLevel(level) {
+  if (level === 0) {
+    return false;
+  }
+  return {
+    level,
+    hasBasic: true,
+    has256: level >= 2,
+    has16m: level >= 3
+  };
+}
+function _supportsColor(haveStream, { streamIsTTY, sniffFlags = true } = {}) {
+  const noFlagForceColor = envForceColor();
+  if (noFlagForceColor !== void 0) {
+    flagForceColor = noFlagForceColor;
+  }
+  const forceColor = sniffFlags ? flagForceColor : noFlagForceColor;
+  if (forceColor === 0) {
+    return 0;
+  }
+  if (sniffFlags) {
+    if (hasFlag("color=16m") || hasFlag("color=full") || hasFlag("color=truecolor")) {
+      return 3;
+    }
+    if (hasFlag("color=256")) {
+      return 2;
+    }
+  }
+  if ("TF_BUILD" in env && "AGENT_NAME" in env) {
+    return 1;
+  }
+  if (haveStream && !streamIsTTY && forceColor === void 0) {
+    return 0;
+  }
+  const min = forceColor || 0;
+  if (env.TERM === "dumb") {
+    return min;
+  }
+  if (import_node_process.default.platform === "win32") {
+    const osRelease = import_node_os.default.release().split(".");
+    if (Number(osRelease[0]) >= 10 && Number(osRelease[2]) >= 10586) {
+      return Number(osRelease[2]) >= 14931 ? 3 : 2;
+    }
+    return 1;
+  }
+  if ("CI" in env) {
+    if (["GITHUB_ACTIONS", "GITEA_ACTIONS", "CIRCLECI"].some((key) => key in env)) {
+      return 3;
+    }
+    if (["TRAVIS", "APPVEYOR", "GITLAB_CI", "BUILDKITE", "DRONE"].some((sign2) => sign2 in env) || env.CI_NAME === "codeship") {
+      return 1;
+    }
+    return min;
+  }
+  if ("TEAMCITY_VERSION" in env) {
+    return /^(9\.(0*[1-9]\d*)\.|\d{2,}\.)/.test(env.TEAMCITY_VERSION) ? 1 : 0;
+  }
+  if (env.COLORTERM === "truecolor") {
+    return 3;
+  }
+  if (env.TERM === "xterm-kitty") {
+    return 3;
+  }
+  if (env.TERM === "xterm-ghostty") {
+    return 3;
+  }
+  if (env.TERM === "wezterm") {
+    return 3;
+  }
+  if ("TERM_PROGRAM" in env) {
+    const version4 = Number.parseInt((env.TERM_PROGRAM_VERSION || "").split(".")[0], 10);
+    switch (env.TERM_PROGRAM) {
+      case "iTerm.app": {
+        return version4 >= 3 ? 3 : 2;
+      }
+      case "Apple_Terminal": {
+        return 2;
+      }
+    }
+  }
+  if (/-256(color)?$/i.test(env.TERM)) {
+    return 2;
+  }
+  if (/^screen|^xterm|^vt100|^vt220|^rxvt|color|ansi|cygwin|linux/i.test(env.TERM)) {
+    return 1;
+  }
+  if ("COLORTERM" in env) {
+    return 1;
+  }
+  return min;
+}
+function createSupportsColor(stream, options = {}) {
+  const level = _supportsColor(stream, {
+    streamIsTTY: stream && stream.isTTY,
+    ...options
+  });
+  return translateLevel(level);
+}
+var import_node_process, import_node_os, import_node_tty, env, flagForceColor, supportsColor, supports_color_default;
+var init_supports_color = __esm({
+  "runner/node_modules/chalk/source/vendor/supports-color/index.js"() {
+    import_node_process = __toESM(require("node:process"), 1);
+    import_node_os = __toESM(require("node:os"), 1);
+    import_node_tty = __toESM(require("node:tty"), 1);
+    ({ env } = import_node_process.default);
+    if (hasFlag("no-color") || hasFlag("no-colors") || hasFlag("color=false") || hasFlag("color=never")) {
+      flagForceColor = 0;
+    } else if (hasFlag("color") || hasFlag("colors") || hasFlag("color=true") || hasFlag("color=always")) {
+      flagForceColor = 1;
+    }
+    supportsColor = {
+      stdout: createSupportsColor({ isTTY: import_node_tty.default.isatty(1) }),
+      stderr: createSupportsColor({ isTTY: import_node_tty.default.isatty(2) })
+    };
+    supports_color_default = supportsColor;
+  }
+});
+
+// runner/node_modules/chalk/source/utilities.js
+function stringReplaceAll(string, substring, replacer) {
+  let index2 = string.indexOf(substring);
+  if (index2 === -1) {
+    return string;
+  }
+  const substringLength = substring.length;
+  let endIndex = 0;
+  let returnValue = "";
+  do {
+    returnValue += string.slice(endIndex, index2) + substring + replacer;
+    endIndex = index2 + substringLength;
+    index2 = string.indexOf(substring, endIndex);
+  } while (index2 !== -1);
+  returnValue += string.slice(endIndex);
+  return returnValue;
+}
+function stringEncaseCRLFWithFirstIndex(string, prefix, postfix, index2) {
+  let endIndex = 0;
+  let returnValue = "";
+  do {
+    const gotCR = string[index2 - 1] === "\r";
+    returnValue += string.slice(endIndex, gotCR ? index2 - 1 : index2) + prefix + (gotCR ? "\r\n" : "\n") + postfix;
+    endIndex = index2 + 1;
+    index2 = string.indexOf("\n", endIndex);
+  } while (index2 !== -1);
+  returnValue += string.slice(endIndex);
+  return returnValue;
+}
+var init_utilities = __esm({
+  "runner/node_modules/chalk/source/utilities.js"() {
+  }
+});
+
+// runner/node_modules/chalk/source/index.js
+function createChalk(options) {
+  return chalkFactory(options);
+}
+var stdoutColor, stderrColor, GENERATOR, STYLER, IS_EMPTY, levelMapping, styles2, applyOptions, chalkFactory, getModelAnsi, usedModels, proto, createStyler, createBuilder, applyStyle, chalk, chalkStderr, source_default;
+var init_source = __esm({
+  "runner/node_modules/chalk/source/index.js"() {
+    init_ansi_styles();
+    init_supports_color();
+    init_utilities();
+    ({ stdout: stdoutColor, stderr: stderrColor } = supports_color_default);
+    GENERATOR = /* @__PURE__ */ Symbol("GENERATOR");
+    STYLER = /* @__PURE__ */ Symbol("STYLER");
+    IS_EMPTY = /* @__PURE__ */ Symbol("IS_EMPTY");
+    levelMapping = [
+      "ansi",
+      "ansi",
+      "ansi256",
+      "ansi16m"
+    ];
+    styles2 = /* @__PURE__ */ Object.create(null);
+    applyOptions = (object, options = {}) => {
+      if (options.level && !(Number.isInteger(options.level) && options.level >= 0 && options.level <= 3)) {
+        throw new Error("The `level` option should be an integer from 0 to 3");
+      }
+      const colorLevel = stdoutColor ? stdoutColor.level : 0;
+      object.level = options.level === void 0 ? colorLevel : options.level;
+    };
+    chalkFactory = (options) => {
+      const chalk2 = (...strings) => strings.join(" ");
+      applyOptions(chalk2, options);
+      Object.setPrototypeOf(chalk2, createChalk.prototype);
+      return chalk2;
+    };
+    Object.setPrototypeOf(createChalk.prototype, Function.prototype);
+    for (const [styleName, style] of Object.entries(ansi_styles_default)) {
+      styles2[styleName] = {
+        get() {
+          const builder = createBuilder(this, createStyler(style.open, style.close, this[STYLER]), this[IS_EMPTY]);
+          Object.defineProperty(this, styleName, { value: builder });
+          return builder;
+        }
+      };
+    }
+    styles2.visible = {
+      get() {
+        const builder = createBuilder(this, this[STYLER], true);
+        Object.defineProperty(this, "visible", { value: builder });
+        return builder;
+      }
+    };
+    getModelAnsi = (model, level, type, ...arguments_) => {
+      if (model === "rgb") {
+        if (level === "ansi16m") {
+          return ansi_styles_default[type].ansi16m(...arguments_);
+        }
+        if (level === "ansi256") {
+          return ansi_styles_default[type].ansi256(ansi_styles_default.rgbToAnsi256(...arguments_));
+        }
+        return ansi_styles_default[type].ansi(ansi_styles_default.rgbToAnsi(...arguments_));
+      }
+      if (model === "hex") {
+        return getModelAnsi("rgb", level, type, ...ansi_styles_default.hexToRgb(...arguments_));
+      }
+      return ansi_styles_default[type][model](...arguments_);
+    };
+    usedModels = ["rgb", "hex", "ansi256"];
+    for (const model of usedModels) {
+      styles2[model] = {
+        get() {
+          const { level } = this;
+          return function(...arguments_) {
+            const styler = createStyler(getModelAnsi(model, levelMapping[level], "color", ...arguments_), ansi_styles_default.color.close, this[STYLER]);
+            return createBuilder(this, styler, this[IS_EMPTY]);
+          };
+        }
+      };
+      const bgModel = "bg" + model[0].toUpperCase() + model.slice(1);
+      styles2[bgModel] = {
+        get() {
+          const { level } = this;
+          return function(...arguments_) {
+            const styler = createStyler(getModelAnsi(model, levelMapping[level], "bgColor", ...arguments_), ansi_styles_default.bgColor.close, this[STYLER]);
+            return createBuilder(this, styler, this[IS_EMPTY]);
+          };
+        }
+      };
+    }
+    proto = Object.defineProperties(() => {
+    }, {
+      ...styles2,
+      level: {
+        enumerable: true,
+        get() {
+          return this[GENERATOR].level;
+        },
+        set(level) {
+          this[GENERATOR].level = level;
+        }
+      }
+    });
+    createStyler = (open, close, parent) => {
+      let openAll;
+      let closeAll;
+      if (parent === void 0) {
+        openAll = open;
+        closeAll = close;
+      } else {
+        openAll = parent.openAll + open;
+        closeAll = close + parent.closeAll;
+      }
+      return {
+        open,
+        close,
+        openAll,
+        closeAll,
+        parent
+      };
+    };
+    createBuilder = (self2, _styler, _isEmpty) => {
+      const builder = (...arguments_) => applyStyle(builder, arguments_.length === 1 ? "" + arguments_[0] : arguments_.join(" "));
+      Object.setPrototypeOf(builder, proto);
+      builder[GENERATOR] = self2;
+      builder[STYLER] = _styler;
+      builder[IS_EMPTY] = _isEmpty;
+      return builder;
+    };
+    applyStyle = (self2, string) => {
+      if (self2.level <= 0 || !string) {
+        return self2[IS_EMPTY] ? "" : string;
+      }
+      let styler = self2[STYLER];
+      if (styler === void 0) {
+        return string;
+      }
+      const { openAll, closeAll } = styler;
+      if (string.includes("\x1B")) {
+        while (styler !== void 0) {
+          string = stringReplaceAll(string, styler.close, styler.open);
+          styler = styler.parent;
+        }
+      }
+      const lfIndex = string.indexOf("\n");
+      if (lfIndex !== -1) {
+        string = stringEncaseCRLFWithFirstIndex(string, closeAll, openAll, lfIndex);
+      }
+      return openAll + string + closeAll;
+    };
+    Object.defineProperties(createChalk.prototype, styles2);
+    chalk = createChalk();
+    chalkStderr = createChalk({ level: stderrColor ? stderrColor.level : 0 });
+    source_default = chalk;
+  }
+});
+
 // runner/node_modules/ws/lib/constants.js
 var require_constants = __commonJS({
   "runner/node_modules/ws/lib/constants.js"(exports2, module2) {
@@ -28254,6 +28770,117 @@ var init_esm2 = __esm({
   }
 });
 
+// runner/src/core/puissant.ts
+var puissant_exports = {};
+__export(puissant_exports, {
+  PUISSANT_URL: () => PUISSANT_URL,
+  PuissantClient: () => PuissantClient,
+  logBundleResult: () => logBundleResult,
+  serializeTransaction: () => serializeTransaction,
+  summarizeBundle: () => summarizeBundle,
+  txHashOf: () => txHashOf
+});
+function txHashOf(raw) {
+  return keccak256(raw);
+}
+function summarizeBundle(txs) {
+  return txs.map(
+    (t, i) => `#${i} to=${t.to.slice(0, 10)}\u2026 value=${t.value ?? 0n} gas=${t.gas} gp=${Number(t.gasPrice) / 1e9}gwei`
+  ).join(" | ");
+}
+function logBundleResult(label, r) {
+  if (r.ok) {
+    console.log(source_default.green(`[Puissant] \u2713 ${label} \u5DF2\u63D0\u4EA4: bundle=${r.bundleId ?? "(null)"} txs=${r.txHashes.length}`));
+  } else {
+    console.warn(source_default.yellow(`[Puissant] \u2717 ${label} \u5931\u8D25: ${r.error}`));
+  }
+}
+var PUISSANT_URL, DEFAULT_BUNDLE_TTL_SECONDS, PuissantClient;
+var init_puissant = __esm({
+  "runner/src/core/puissant.ts"() {
+    "use strict";
+    init_esm2();
+    init_source();
+    PUISSANT_URL = "https://puissant-bsc.48.club";
+    DEFAULT_BUNDLE_TTL_SECONDS = 30;
+    PuissantClient = class {
+      constructor(walletClient, publicClient, url = PUISSANT_URL) {
+        this.walletClient = walletClient;
+        this.publicClient = publicClient;
+        this.url = url;
+      }
+      walletClient;
+      publicClient;
+      url;
+      // Submit a bundle. Returns once the relay has ACK'd receipt — NOT once the
+      // bundle is included. Inclusion status must be checked by watching the
+      // tx hashes via publicClient. If the relay rejects synchronously (malformed
+      // bundle / nonce too low / etc.) we surface the error here.
+      async submitBundle(txs, opts = {}) {
+        const account = this.walletClient.account;
+        if (!account) throw new Error("PuissantClient: wallet has no account");
+        const chainId = await this.publicClient.getChainId();
+        const signedRaw = [];
+        const txHashes = [];
+        for (const tx of txs) {
+          const unsigned = {
+            to: tx.to,
+            data: tx.data,
+            value: tx.value ?? 0n,
+            gas: tx.gas,
+            gasPrice: tx.gasPrice,
+            nonce: tx.nonce,
+            chainId,
+            type: "legacy"
+          };
+          const raw = await this.walletClient.signTransaction({
+            ...unsigned,
+            account,
+            chain: null
+          });
+          signedRaw.push(raw);
+          txHashes.push(keccak256(raw));
+        }
+        const maxTimestamp = Math.floor(Date.now() / 1e3) + (opts.ttlSeconds ?? DEFAULT_BUNDLE_TTL_SECONDS);
+        const body = {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "eth_sendPuissant",
+          // [txs, maxTimestamp, acceptReverting?]
+          params: [signedRaw, maxTimestamp, opts.acceptRevertingHashes ?? []]
+        };
+        let resp;
+        try {
+          resp = await fetch(this.url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+            // 10s is plenty — the relay either ACKs fast or it's down.
+            signal: AbortSignal.timeout(1e4)
+          });
+        } catch (e) {
+          return { ok: false, txHashes, error: `relay \u8BF7\u6C42\u5931\u8D25: ${e?.message ?? e}` };
+        }
+        let json;
+        try {
+          json = await resp.json();
+        } catch (e) {
+          return { ok: false, txHashes, error: `relay \u54CD\u5E94\u975E JSON (HTTP ${resp.status})` };
+        }
+        if (json?.error) {
+          const msg = json.error?.message ?? JSON.stringify(json.error);
+          return { ok: false, txHashes, error: `relay \u62D2\u7EDD: ${msg}` };
+        }
+        return {
+          ok: true,
+          bundleId: json?.result,
+          txHashes
+        };
+      }
+    };
+  }
+});
+
 // runner/src/index.ts
 var index_exports = {};
 __export(index_exports, {
@@ -28272,503 +28899,12 @@ module.exports = __toCommonJS(index_exports);
   );
 })();
 
-// runner/node_modules/chalk/source/vendor/ansi-styles/index.js
-var ANSI_BACKGROUND_OFFSET = 10;
-var wrapAnsi16 = (offset = 0) => (code) => `\x1B[${code + offset}m`;
-var wrapAnsi256 = (offset = 0) => (code) => `\x1B[${38 + offset};5;${code}m`;
-var wrapAnsi16m = (offset = 0) => (red, green, blue) => `\x1B[${38 + offset};2;${red};${green};${blue}m`;
-var styles = {
-  modifier: {
-    reset: [0, 0],
-    // 21 isn't widely supported and 22 does the same thing
-    bold: [1, 22],
-    dim: [2, 22],
-    italic: [3, 23],
-    underline: [4, 24],
-    overline: [53, 55],
-    inverse: [7, 27],
-    hidden: [8, 28],
-    strikethrough: [9, 29]
-  },
-  color: {
-    black: [30, 39],
-    red: [31, 39],
-    green: [32, 39],
-    yellow: [33, 39],
-    blue: [34, 39],
-    magenta: [35, 39],
-    cyan: [36, 39],
-    white: [37, 39],
-    // Bright color
-    blackBright: [90, 39],
-    gray: [90, 39],
-    // Alias of `blackBright`
-    grey: [90, 39],
-    // Alias of `blackBright`
-    redBright: [91, 39],
-    greenBright: [92, 39],
-    yellowBright: [93, 39],
-    blueBright: [94, 39],
-    magentaBright: [95, 39],
-    cyanBright: [96, 39],
-    whiteBright: [97, 39]
-  },
-  bgColor: {
-    bgBlack: [40, 49],
-    bgRed: [41, 49],
-    bgGreen: [42, 49],
-    bgYellow: [43, 49],
-    bgBlue: [44, 49],
-    bgMagenta: [45, 49],
-    bgCyan: [46, 49],
-    bgWhite: [47, 49],
-    // Bright color
-    bgBlackBright: [100, 49],
-    bgGray: [100, 49],
-    // Alias of `bgBlackBright`
-    bgGrey: [100, 49],
-    // Alias of `bgBlackBright`
-    bgRedBright: [101, 49],
-    bgGreenBright: [102, 49],
-    bgYellowBright: [103, 49],
-    bgBlueBright: [104, 49],
-    bgMagentaBright: [105, 49],
-    bgCyanBright: [106, 49],
-    bgWhiteBright: [107, 49]
-  }
-};
-var modifierNames = Object.keys(styles.modifier);
-var foregroundColorNames = Object.keys(styles.color);
-var backgroundColorNames = Object.keys(styles.bgColor);
-var colorNames = [...foregroundColorNames, ...backgroundColorNames];
-function assembleStyles() {
-  const codes = /* @__PURE__ */ new Map();
-  for (const [groupName, group] of Object.entries(styles)) {
-    for (const [styleName, style] of Object.entries(group)) {
-      styles[styleName] = {
-        open: `\x1B[${style[0]}m`,
-        close: `\x1B[${style[1]}m`
-      };
-      group[styleName] = styles[styleName];
-      codes.set(style[0], style[1]);
-    }
-    Object.defineProperty(styles, groupName, {
-      value: group,
-      enumerable: false
-    });
-  }
-  Object.defineProperty(styles, "codes", {
-    value: codes,
-    enumerable: false
-  });
-  styles.color.close = "\x1B[39m";
-  styles.bgColor.close = "\x1B[49m";
-  styles.color.ansi = wrapAnsi16();
-  styles.color.ansi256 = wrapAnsi256();
-  styles.color.ansi16m = wrapAnsi16m();
-  styles.bgColor.ansi = wrapAnsi16(ANSI_BACKGROUND_OFFSET);
-  styles.bgColor.ansi256 = wrapAnsi256(ANSI_BACKGROUND_OFFSET);
-  styles.bgColor.ansi16m = wrapAnsi16m(ANSI_BACKGROUND_OFFSET);
-  Object.defineProperties(styles, {
-    rgbToAnsi256: {
-      value(red, green, blue) {
-        if (red === green && green === blue) {
-          if (red < 8) {
-            return 16;
-          }
-          if (red > 248) {
-            return 231;
-          }
-          return Math.round((red - 8) / 247 * 24) + 232;
-        }
-        return 16 + 36 * Math.round(red / 255 * 5) + 6 * Math.round(green / 255 * 5) + Math.round(blue / 255 * 5);
-      },
-      enumerable: false
-    },
-    hexToRgb: {
-      value(hex) {
-        const matches = /[a-f\d]{6}|[a-f\d]{3}/i.exec(hex.toString(16));
-        if (!matches) {
-          return [0, 0, 0];
-        }
-        let [colorString] = matches;
-        if (colorString.length === 3) {
-          colorString = [...colorString].map((character) => character + character).join("");
-        }
-        const integer = Number.parseInt(colorString, 16);
-        return [
-          /* eslint-disable no-bitwise */
-          integer >> 16 & 255,
-          integer >> 8 & 255,
-          integer & 255
-          /* eslint-enable no-bitwise */
-        ];
-      },
-      enumerable: false
-    },
-    hexToAnsi256: {
-      value: (hex) => styles.rgbToAnsi256(...styles.hexToRgb(hex)),
-      enumerable: false
-    },
-    ansi256ToAnsi: {
-      value(code) {
-        if (code < 8) {
-          return 30 + code;
-        }
-        if (code < 16) {
-          return 90 + (code - 8);
-        }
-        let red;
-        let green;
-        let blue;
-        if (code >= 232) {
-          red = ((code - 232) * 10 + 8) / 255;
-          green = red;
-          blue = red;
-        } else {
-          code -= 16;
-          const remainder = code % 36;
-          red = Math.floor(code / 36) / 5;
-          green = Math.floor(remainder / 6) / 5;
-          blue = remainder % 6 / 5;
-        }
-        const value = Math.max(red, green, blue) * 2;
-        if (value === 0) {
-          return 30;
-        }
-        let result = 30 + (Math.round(blue) << 2 | Math.round(green) << 1 | Math.round(red));
-        if (value === 2) {
-          result += 60;
-        }
-        return result;
-      },
-      enumerable: false
-    },
-    rgbToAnsi: {
-      value: (red, green, blue) => styles.ansi256ToAnsi(styles.rgbToAnsi256(red, green, blue)),
-      enumerable: false
-    },
-    hexToAnsi: {
-      value: (hex) => styles.ansi256ToAnsi(styles.hexToAnsi256(hex)),
-      enumerable: false
-    }
-  });
-  return styles;
-}
-var ansiStyles = assembleStyles();
-var ansi_styles_default = ansiStyles;
-
-// runner/node_modules/chalk/source/vendor/supports-color/index.js
-var import_node_process = __toESM(require("node:process"), 1);
-var import_node_os = __toESM(require("node:os"), 1);
-var import_node_tty = __toESM(require("node:tty"), 1);
-function hasFlag(flag, argv = globalThis.Deno ? globalThis.Deno.args : import_node_process.default.argv) {
-  const prefix = flag.startsWith("-") ? "" : flag.length === 1 ? "-" : "--";
-  const position = argv.indexOf(prefix + flag);
-  const terminatorPosition = argv.indexOf("--");
-  return position !== -1 && (terminatorPosition === -1 || position < terminatorPosition);
-}
-var { env } = import_node_process.default;
-var flagForceColor;
-if (hasFlag("no-color") || hasFlag("no-colors") || hasFlag("color=false") || hasFlag("color=never")) {
-  flagForceColor = 0;
-} else if (hasFlag("color") || hasFlag("colors") || hasFlag("color=true") || hasFlag("color=always")) {
-  flagForceColor = 1;
-}
-function envForceColor() {
-  if ("FORCE_COLOR" in env) {
-    if (env.FORCE_COLOR === "true") {
-      return 1;
-    }
-    if (env.FORCE_COLOR === "false") {
-      return 0;
-    }
-    return env.FORCE_COLOR.length === 0 ? 1 : Math.min(Number.parseInt(env.FORCE_COLOR, 10), 3);
-  }
-}
-function translateLevel(level) {
-  if (level === 0) {
-    return false;
-  }
-  return {
-    level,
-    hasBasic: true,
-    has256: level >= 2,
-    has16m: level >= 3
-  };
-}
-function _supportsColor(haveStream, { streamIsTTY, sniffFlags = true } = {}) {
-  const noFlagForceColor = envForceColor();
-  if (noFlagForceColor !== void 0) {
-    flagForceColor = noFlagForceColor;
-  }
-  const forceColor = sniffFlags ? flagForceColor : noFlagForceColor;
-  if (forceColor === 0) {
-    return 0;
-  }
-  if (sniffFlags) {
-    if (hasFlag("color=16m") || hasFlag("color=full") || hasFlag("color=truecolor")) {
-      return 3;
-    }
-    if (hasFlag("color=256")) {
-      return 2;
-    }
-  }
-  if ("TF_BUILD" in env && "AGENT_NAME" in env) {
-    return 1;
-  }
-  if (haveStream && !streamIsTTY && forceColor === void 0) {
-    return 0;
-  }
-  const min = forceColor || 0;
-  if (env.TERM === "dumb") {
-    return min;
-  }
-  if (import_node_process.default.platform === "win32") {
-    const osRelease = import_node_os.default.release().split(".");
-    if (Number(osRelease[0]) >= 10 && Number(osRelease[2]) >= 10586) {
-      return Number(osRelease[2]) >= 14931 ? 3 : 2;
-    }
-    return 1;
-  }
-  if ("CI" in env) {
-    if (["GITHUB_ACTIONS", "GITEA_ACTIONS", "CIRCLECI"].some((key) => key in env)) {
-      return 3;
-    }
-    if (["TRAVIS", "APPVEYOR", "GITLAB_CI", "BUILDKITE", "DRONE"].some((sign2) => sign2 in env) || env.CI_NAME === "codeship") {
-      return 1;
-    }
-    return min;
-  }
-  if ("TEAMCITY_VERSION" in env) {
-    return /^(9\.(0*[1-9]\d*)\.|\d{2,}\.)/.test(env.TEAMCITY_VERSION) ? 1 : 0;
-  }
-  if (env.COLORTERM === "truecolor") {
-    return 3;
-  }
-  if (env.TERM === "xterm-kitty") {
-    return 3;
-  }
-  if (env.TERM === "xterm-ghostty") {
-    return 3;
-  }
-  if (env.TERM === "wezterm") {
-    return 3;
-  }
-  if ("TERM_PROGRAM" in env) {
-    const version4 = Number.parseInt((env.TERM_PROGRAM_VERSION || "").split(".")[0], 10);
-    switch (env.TERM_PROGRAM) {
-      case "iTerm.app": {
-        return version4 >= 3 ? 3 : 2;
-      }
-      case "Apple_Terminal": {
-        return 2;
-      }
-    }
-  }
-  if (/-256(color)?$/i.test(env.TERM)) {
-    return 2;
-  }
-  if (/^screen|^xterm|^vt100|^vt220|^rxvt|color|ansi|cygwin|linux/i.test(env.TERM)) {
-    return 1;
-  }
-  if ("COLORTERM" in env) {
-    return 1;
-  }
-  return min;
-}
-function createSupportsColor(stream, options = {}) {
-  const level = _supportsColor(stream, {
-    streamIsTTY: stream && stream.isTTY,
-    ...options
-  });
-  return translateLevel(level);
-}
-var supportsColor = {
-  stdout: createSupportsColor({ isTTY: import_node_tty.default.isatty(1) }),
-  stderr: createSupportsColor({ isTTY: import_node_tty.default.isatty(2) })
-};
-var supports_color_default = supportsColor;
-
-// runner/node_modules/chalk/source/utilities.js
-function stringReplaceAll(string, substring, replacer) {
-  let index2 = string.indexOf(substring);
-  if (index2 === -1) {
-    return string;
-  }
-  const substringLength = substring.length;
-  let endIndex = 0;
-  let returnValue = "";
-  do {
-    returnValue += string.slice(endIndex, index2) + substring + replacer;
-    endIndex = index2 + substringLength;
-    index2 = string.indexOf(substring, endIndex);
-  } while (index2 !== -1);
-  returnValue += string.slice(endIndex);
-  return returnValue;
-}
-function stringEncaseCRLFWithFirstIndex(string, prefix, postfix, index2) {
-  let endIndex = 0;
-  let returnValue = "";
-  do {
-    const gotCR = string[index2 - 1] === "\r";
-    returnValue += string.slice(endIndex, gotCR ? index2 - 1 : index2) + prefix + (gotCR ? "\r\n" : "\n") + postfix;
-    endIndex = index2 + 1;
-    index2 = string.indexOf("\n", endIndex);
-  } while (index2 !== -1);
-  returnValue += string.slice(endIndex);
-  return returnValue;
-}
-
-// runner/node_modules/chalk/source/index.js
-var { stdout: stdoutColor, stderr: stderrColor } = supports_color_default;
-var GENERATOR = /* @__PURE__ */ Symbol("GENERATOR");
-var STYLER = /* @__PURE__ */ Symbol("STYLER");
-var IS_EMPTY = /* @__PURE__ */ Symbol("IS_EMPTY");
-var levelMapping = [
-  "ansi",
-  "ansi",
-  "ansi256",
-  "ansi16m"
-];
-var styles2 = /* @__PURE__ */ Object.create(null);
-var applyOptions = (object, options = {}) => {
-  if (options.level && !(Number.isInteger(options.level) && options.level >= 0 && options.level <= 3)) {
-    throw new Error("The `level` option should be an integer from 0 to 3");
-  }
-  const colorLevel = stdoutColor ? stdoutColor.level : 0;
-  object.level = options.level === void 0 ? colorLevel : options.level;
-};
-var chalkFactory = (options) => {
-  const chalk2 = (...strings) => strings.join(" ");
-  applyOptions(chalk2, options);
-  Object.setPrototypeOf(chalk2, createChalk.prototype);
-  return chalk2;
-};
-function createChalk(options) {
-  return chalkFactory(options);
-}
-Object.setPrototypeOf(createChalk.prototype, Function.prototype);
-for (const [styleName, style] of Object.entries(ansi_styles_default)) {
-  styles2[styleName] = {
-    get() {
-      const builder = createBuilder(this, createStyler(style.open, style.close, this[STYLER]), this[IS_EMPTY]);
-      Object.defineProperty(this, styleName, { value: builder });
-      return builder;
-    }
-  };
-}
-styles2.visible = {
-  get() {
-    const builder = createBuilder(this, this[STYLER], true);
-    Object.defineProperty(this, "visible", { value: builder });
-    return builder;
-  }
-};
-var getModelAnsi = (model, level, type, ...arguments_) => {
-  if (model === "rgb") {
-    if (level === "ansi16m") {
-      return ansi_styles_default[type].ansi16m(...arguments_);
-    }
-    if (level === "ansi256") {
-      return ansi_styles_default[type].ansi256(ansi_styles_default.rgbToAnsi256(...arguments_));
-    }
-    return ansi_styles_default[type].ansi(ansi_styles_default.rgbToAnsi(...arguments_));
-  }
-  if (model === "hex") {
-    return getModelAnsi("rgb", level, type, ...ansi_styles_default.hexToRgb(...arguments_));
-  }
-  return ansi_styles_default[type][model](...arguments_);
-};
-var usedModels = ["rgb", "hex", "ansi256"];
-for (const model of usedModels) {
-  styles2[model] = {
-    get() {
-      const { level } = this;
-      return function(...arguments_) {
-        const styler = createStyler(getModelAnsi(model, levelMapping[level], "color", ...arguments_), ansi_styles_default.color.close, this[STYLER]);
-        return createBuilder(this, styler, this[IS_EMPTY]);
-      };
-    }
-  };
-  const bgModel = "bg" + model[0].toUpperCase() + model.slice(1);
-  styles2[bgModel] = {
-    get() {
-      const { level } = this;
-      return function(...arguments_) {
-        const styler = createStyler(getModelAnsi(model, levelMapping[level], "bgColor", ...arguments_), ansi_styles_default.bgColor.close, this[STYLER]);
-        return createBuilder(this, styler, this[IS_EMPTY]);
-      };
-    }
-  };
-}
-var proto = Object.defineProperties(() => {
-}, {
-  ...styles2,
-  level: {
-    enumerable: true,
-    get() {
-      return this[GENERATOR].level;
-    },
-    set(level) {
-      this[GENERATOR].level = level;
-    }
-  }
-});
-var createStyler = (open, close, parent) => {
-  let openAll;
-  let closeAll;
-  if (parent === void 0) {
-    openAll = open;
-    closeAll = close;
-  } else {
-    openAll = parent.openAll + open;
-    closeAll = close + parent.closeAll;
-  }
-  return {
-    open,
-    close,
-    openAll,
-    closeAll,
-    parent
-  };
-};
-var createBuilder = (self2, _styler, _isEmpty) => {
-  const builder = (...arguments_) => applyStyle(builder, arguments_.length === 1 ? "" + arguments_[0] : arguments_.join(" "));
-  Object.setPrototypeOf(builder, proto);
-  builder[GENERATOR] = self2;
-  builder[STYLER] = _styler;
-  builder[IS_EMPTY] = _isEmpty;
-  return builder;
-};
-var applyStyle = (self2, string) => {
-  if (self2.level <= 0 || !string) {
-    return self2[IS_EMPTY] ? "" : string;
-  }
-  let styler = self2[STYLER];
-  if (styler === void 0) {
-    return string;
-  }
-  const { openAll, closeAll } = styler;
-  if (string.includes("\x1B")) {
-    while (styler !== void 0) {
-      string = stringReplaceAll(string, styler.close, styler.open);
-      styler = styler.parent;
-    }
-  }
-  const lfIndex = string.indexOf("\n");
-  if (lfIndex !== -1) {
-    string = stringEncaseCRLFWithFirstIndex(string, closeAll, openAll, lfIndex);
-  }
-  return openAll + string + closeAll;
-};
-Object.defineProperties(createChalk.prototype, styles2);
-var chalk = createChalk();
-var chalkStderr = createChalk({ level: stderrColor ? stderrColor.level : 0 });
-var source_default = chalk;
+// runner/src/index.ts
+init_source();
 
 // runner/src/core/ws-server.ts
 init_wrapper();
+init_source();
 var WsServer = class {
   wss;
   clients = /* @__PURE__ */ new Set();
@@ -29280,6 +29416,7 @@ init_esm2();
 
 // runner/src/core/mempool.ts
 init_esm2();
+init_source();
 var SIG_ETH_FOR_TOKENS = "0x7ff36ab5";
 var SIG_TOKENS_FOR_ETH = "0x18cbafe5";
 var SIG_TOKENS_FOR_TOKENS = "0x38ed1739";
@@ -29721,6 +29858,7 @@ var SANDWICH_PROXY_ABI = [
 ];
 
 // runner/src/strategies/sandwich.ts
+init_source();
 var import_crypto2 = require("crypto");
 var PAIR_ABI = parseAbi([
   "function getReserves() view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)",
@@ -30098,10 +30236,12 @@ var SandwichStrategy = class {
 
 // runner/src/strategies/arbitrage.ts
 init_esm2();
+init_source();
 var import_crypto3 = require("crypto");
 
 // runner/src/core/block-watcher.ts
 init_esm2();
+init_source();
 var SIG_ETH_FOR_TOKENS2 = "0x7ff36ab5";
 var SIG_TOKENS_FOR_ETH2 = "0x18cbafe5";
 var SIG_TOKENS_FOR_TOKENS2 = "0x38ed1739";
@@ -30249,94 +30389,8 @@ function parseSwap(tx, blockNumber, sig) {
   }
 }
 
-// runner/src/core/puissant.ts
-init_esm2();
-var PUISSANT_URL = "https://puissant-bsc.48.club";
-var DEFAULT_BUNDLE_TTL_SECONDS = 30;
-var PuissantClient = class {
-  constructor(walletClient, publicClient, url = PUISSANT_URL) {
-    this.walletClient = walletClient;
-    this.publicClient = publicClient;
-    this.url = url;
-  }
-  walletClient;
-  publicClient;
-  url;
-  // Submit a bundle. Returns once the relay has ACK'd receipt — NOT once the
-  // bundle is included. Inclusion status must be checked by watching the
-  // tx hashes via publicClient. If the relay rejects synchronously (malformed
-  // bundle / nonce too low / etc.) we surface the error here.
-  async submitBundle(txs, opts = {}) {
-    const account = this.walletClient.account;
-    if (!account) throw new Error("PuissantClient: wallet has no account");
-    const chainId = await this.publicClient.getChainId();
-    const signedRaw = [];
-    const txHashes = [];
-    for (const tx of txs) {
-      const unsigned = {
-        to: tx.to,
-        data: tx.data,
-        value: tx.value ?? 0n,
-        gas: tx.gas,
-        gasPrice: tx.gasPrice,
-        nonce: tx.nonce,
-        chainId,
-        type: "legacy"
-      };
-      const raw = await this.walletClient.signTransaction({
-        ...unsigned,
-        account,
-        chain: null
-      });
-      signedRaw.push(raw);
-      txHashes.push(keccak256(raw));
-    }
-    const maxTimestamp = Math.floor(Date.now() / 1e3) + (opts.ttlSeconds ?? DEFAULT_BUNDLE_TTL_SECONDS);
-    const body = {
-      jsonrpc: "2.0",
-      id: 1,
-      method: "eth_sendPuissant",
-      // [txs, maxTimestamp, acceptReverting?]
-      params: [signedRaw, maxTimestamp, opts.acceptRevertingHashes ?? []]
-    };
-    let resp;
-    try {
-      resp = await fetch(this.url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        // 10s is plenty — the relay either ACKs fast or it's down.
-        signal: AbortSignal.timeout(1e4)
-      });
-    } catch (e) {
-      return { ok: false, txHashes, error: `relay \u8BF7\u6C42\u5931\u8D25: ${e?.message ?? e}` };
-    }
-    let json;
-    try {
-      json = await resp.json();
-    } catch (e) {
-      return { ok: false, txHashes, error: `relay \u54CD\u5E94\u975E JSON (HTTP ${resp.status})` };
-    }
-    if (json?.error) {
-      const msg = json.error?.message ?? JSON.stringify(json.error);
-      return { ok: false, txHashes, error: `relay \u62D2\u7EDD: ${msg}` };
-    }
-    return {
-      ok: true,
-      bundleId: json?.result,
-      txHashes
-    };
-  }
-};
-function logBundleResult(label, r) {
-  if (r.ok) {
-    console.log(source_default.green(`[Puissant] \u2713 ${label} \u5DF2\u63D0\u4EA4: bundle=${r.bundleId ?? "(null)"} txs=${r.txHashes.length}`));
-  } else {
-    console.warn(source_default.yellow(`[Puissant] \u2717 ${label} \u5931\u8D25: ${r.error}`));
-  }
-}
-
 // runner/src/strategies/arbitrage.ts
+init_puissant();
 var WBNB2 = "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c";
 var FACTORY_ABI = parseAbi([
   "function getPair(address tokenA, address tokenB) view returns (address pair)"
@@ -30344,6 +30398,11 @@ var FACTORY_ABI = parseAbi([
 var PAIR_ABI2 = parseAbi([
   "function getReserves() view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)",
   "function token0() view returns (address)"
+]);
+var V3_QUOTER = "0xB048Bbc1Ee6b733FFfCFb9e9CeF7375518e25997";
+var V3_FEE_TIERS = [100, 500, 2500, 1e4];
+var V3_QUOTER_ABI = parseAbi([
+  "function quoteExactInputSingle((address tokenIn, address tokenOut, uint256 amountIn, uint24 fee, uint160 sqrtPriceLimitX96)) returns (uint256 amountOut, uint160 sqrtPriceX96After, uint32 initializedTicksCrossed, uint256 gasEstimate)"
 ]);
 var FEE_NUM2 = 9975n;
 var FEE_DEN2 = 10000n;
@@ -30540,7 +30599,28 @@ var ArbitrageStrategy = class {
       for (const tp of this.tokenPairs) {
         const ev = await this.evaluateToken(tp);
         if (!ev) continue;
-        if (!best || ev.netUSD > best.netUSD) best = { token: tp, ...ev };
+        if (ev.v3Hint && ev.netUSD < this.config.minProfitUSD && ev.v3Hint.spreadVsBestV2Pct >= this.config.minSpreadPct * 2) {
+          this.ws.broadcast({
+            type: "opportunity",
+            payload: {
+              id: (0, import_crypto3.randomUUID)(),
+              strategy: "arbitrage",
+              token: `${tp.symbol} [V3@${(ev.v3Hint.fee / 1e4).toFixed(2)}%]`,
+              tokenAddress: tp.address,
+              chain: "BSC",
+              profitUSD: 0,
+              profitNative: 0,
+              gasUSD: 0,
+              netProfit: 0,
+              timestamp: Date.now(),
+              executable: false,
+              note: `V3 vs V2 \u4EF7\u5DEE ${ev.v3Hint.spreadVsBestV2Pct.toFixed(2)}% \u2014 \u5F53\u524D\u7248\u672C\u672A\u96C6\u6210 V3 \u6267\u884C`
+            }
+          });
+        }
+        if (ev.netUSD > 0 && (!best || ev.netUSD > best.netUSD)) {
+          best = { token: tp, buy: ev.buy, sell: ev.sell, spread: ev.spread, netUSD: ev.netUSD };
+        }
       }
       if (best && best.netUSD >= this.config.minProfitUSD) {
         console.log(source_default.cyan(
@@ -30559,6 +30639,8 @@ var ArbitrageStrategy = class {
   }
   // Returns null if pool data unavailable, spread below threshold, or sized
   // trade unprofitable. Returns full plan if it's a real opportunity.
+  // Also detects V3 cross-DEX spreads (read-only; not executed because the
+  // proxy targets V2 routers).
   async evaluateToken(tp) {
     if (!tp.pancake || !tp.biswap) return null;
     const [poolA, poolB] = await Promise.all([
@@ -30571,7 +30653,6 @@ var ArbitrageStrategy = class {
     const minP = Math.min(priceA, priceB);
     const maxP = Math.max(priceA, priceB);
     const spread = (maxP - minP) / minP * 100;
-    if (spread < this.config.minSpreadPct) return null;
     const buy = priceA < priceB ? poolA : poolB;
     const sell = priceA < priceB ? poolB : poolA;
     const budgetBNB = this.config.executionAmountUSD / this.bnbPrice;
@@ -30579,18 +30660,73 @@ var ArbitrageStrategy = class {
     const sizeBNB = Math.min(budgetBNB, maxByImpactBNB);
     if (sizeBNB <= 1e-3) return null;
     const amountIn = parseUnits(sizeBNB.toFixed(6), 18);
+    const v3 = await this.loadV3Quote(tp.address, amountIn, "buy").catch(() => null);
+    let v3Hint;
+    if (v3) {
+      const bestV2 = Math.min(priceA, priceB);
+      const spreadV3 = Math.abs(v3.priceBNBPerToken - bestV2) / Math.min(v3.priceBNBPerToken, bestV2) * 100;
+      v3Hint = { fee: v3.fee, priceBNBPerToken: v3.priceBNBPerToken, spreadVsBestV2Pct: spreadV3 };
+    }
+    if (spread < this.config.minSpreadPct) {
+      if (v3Hint && v3Hint.spreadVsBestV2Pct >= this.config.minSpreadPct * 2) {
+        return {
+          buy,
+          sell,
+          spread: v3Hint.spreadVsBestV2Pct,
+          netUSD: 0,
+          // not executable, no claim of profit
+          amountIn,
+          minFrontOut: 0n,
+          minBackOut: 0n,
+          v3Hint
+        };
+      }
+      return null;
+    }
     const tokenOut = getAmountOut2(amountIn, buy.reserveBNB, buy.reserveToken);
     if (tokenOut === 0n) return null;
     const bnbOut = getAmountOut2(tokenOut, sell.reserveToken, sell.reserveBNB);
     const profitBNB = Number(formatEther(bnbOut)) - sizeBNB;
-    const gasPriceWei = parseUnits(String(Math.min(this.config.maxGasGwei, 5)), 9);
+    const gasPriceWei = parseUnits(String(Math.max(this.config.maxGasGwei, 1)), 9);
     const gasCostBNB = Number(formatEther((GAS_FRONTRUN2 + GAS_BACKRUN2) * gasPriceWei));
     const gasCostUSD = gasCostBNB * this.bnbPrice;
     const netUSD = profitBNB * this.bnbPrice - gasCostUSD;
     const slip = this.config.slippageTolerance / 100;
     const minFrontOut = tokenOut * BigInt(Math.floor((1 - slip) * 1e4)) / 10000n;
     const minBackOut = bnbOut * BigInt(Math.floor((1 - slip * 2) * 1e4)) / 10000n;
-    return { buy, sell, spread, netUSD, amountIn, minFrontOut, minBackOut };
+    return { buy, sell, spread, netUSD, amountIn, minFrontOut, minBackOut, v3Hint };
+  }
+  // Probe Pancake V3 for the best price across all fee tiers. We try each
+  // tier in parallel and pick the highest amountOut. Tiers without an
+  // initialised pool revert; we silently filter those.
+  //
+  // sqrtPriceLimitX96=0 means "no price limit" — quoter returns the natural
+  // result given current liquidity. The quoter's amountOut already accounts
+  // for the pool fee, so the implied price is the after-fee execution price.
+  async loadV3Quote(token, sizeBNB, direction) {
+    const tokenIn = direction === "buy" ? WBNB2 : token;
+    const tokenOut = direction === "buy" ? token : WBNB2;
+    const probes = await Promise.allSettled(
+      V3_FEE_TIERS.map((fee) => this.publicClient.readContract({
+        address: V3_QUOTER,
+        abi: V3_QUOTER_ABI,
+        functionName: "quoteExactInputSingle",
+        args: [{ tokenIn, tokenOut, amountIn: sizeBNB, fee, sqrtPriceLimitX96: 0n }]
+      }))
+    );
+    let best = null;
+    for (let i = 0; i < probes.length; i++) {
+      const r = probes[i];
+      if (r.status !== "fulfilled") continue;
+      const amountOut = r.value[0];
+      if (amountOut === 0n) continue;
+      const price = direction === "buy" ? Number(formatEther(sizeBNB)) / Number(formatUnits(amountOut, 18)) : Number(formatEther(amountOut)) / Number(formatUnits(sizeBNB, 18));
+      if (!Number.isFinite(price) || price <= 0) continue;
+      if (!best || price < best.priceBNBPerToken) {
+        best = { name: "PancakeV3", fee: V3_FEE_TIERS[i], priceBNBPerToken: price };
+      }
+    }
+    return best;
   }
   async loadPool(name, pair, router) {
     try {
@@ -30625,7 +30761,7 @@ var ArbitrageStrategy = class {
         address: account.address,
         blockTag: "pending"
       });
-      const gasPriceWei = parseUnits(String(Math.min(this.config.maxGasGwei, 5)), 9);
+      const gasPriceWei = parseUnits(String(Math.max(this.config.maxGasGwei, 1)), 9);
       const frontData = encodeFunctionData({
         abi: SANDWICH_PROXY_ABI,
         functionName: "frontrun",
@@ -30725,6 +30861,7 @@ var ArbitrageStrategy = class {
 
 // runner/src/strategies/sniper.ts
 init_esm2();
+init_source();
 var import_crypto4 = require("crypto");
 var WBNB3 = "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c";
 var WBNB_LC = WBNB3.toLowerCase();
@@ -30745,7 +30882,15 @@ var ERC20_ABI = parseAbi([
   "function approve(address spender, uint256 amount) returns (bool)",
   "function allowance(address owner, address spender) view returns (uint256)",
   "function symbol() view returns (string)",
-  "function decimals() view returns (uint8)"
+  "function decimals() view returns (uint8)",
+  "function totalSupply() view returns (uint256)"
+]);
+var OWNED_ABI = parseAbi([
+  "function owner() view returns (address)"
+]);
+var DEAD_ADDRS = /* @__PURE__ */ new Set([
+  "0x0000000000000000000000000000000000000000",
+  "0x000000000000000000000000000000000000dead"
 ]);
 var PANCAKE_ROUTER = "0x10ED43C718714eb63d5aA57B78B54704E256024E";
 var BNB_PRICE_FALLBACK3 = 580;
@@ -30889,6 +31034,21 @@ var SniperStrategy = class {
     console.log(source_default.cyan(
       `[Sniper] \u26A1 \u65B0\u6C60: ${symbol} (${target.slice(0, 10)}\u2026) \u6D41\u52A8\u6027 $${liqUSD.toFixed(0)}`
     ));
+    const safety = await this.antiRugCheck(target, pair);
+    const safetyLine = [
+      `owner=${safety.ownerRenounced === void 0 ? "?" : safety.ownerRenounced ? "\u5DF2\u5F03\u6743" : "\u672A\u5F03\u6743"}`,
+      `LP\u71C3\u6BC1=${safety.lpBurnedPct === void 0 ? "?" : safety.lpBurnedPct.toFixed(0) + "%"}`
+    ].join(" \xB7 ");
+    console.log(source_default.dim(`[Sniper]   \u9632 rug: ${safetyLine}`));
+    if (this.config.requireRenounced && safety.ownerRenounced === false) {
+      console.log(source_default.red(`[Sniper] \u2717 \u8DF3\u8FC7 ${symbol}: owner \u672A\u5F03\u6743 (${safety.ownerAddress?.slice(0, 10)}\u2026)`));
+      return;
+    }
+    const minBurn = this.config.minLpBurnedPct ?? 0;
+    if (minBurn > 0 && (safety.lpBurnedPct ?? 0) < minBurn) {
+      console.log(source_default.red(`[Sniper] \u2717 \u8DF3\u8FC7 ${symbol}: LP \u71C3\u6BC1 ${(safety.lpBurnedPct ?? 0).toFixed(1)}% < ${minBurn}%`));
+      return;
+    }
     const buyAmountBNB = Math.min(
       this.config.maxBuyUSD / this.bnbPrice,
       Number(formatEther(reserveBNB)) * 0.01
@@ -30943,6 +31103,49 @@ var SniperStrategy = class {
     } catch (e) {
       return { ok: false, reason: cleanError3(e) };
     }
+  }
+  // ── Anti-rug heuristics ─────────────────────────────────────────────────
+  // Two cheap on-chain reads that catch the most common low-effort rugs:
+  //   • owner() → if exists and not 0x0/0xdead, the deployer can still flip
+  //     tax / blacklist / pause. Real "fair launch" tokens renounce.
+  //   • LP burn % → balanceOf(0xdead, pair) / totalSupply(pair). High burn
+  //     means the deployer can't pull liquidity.
+  // Both are advisory by default — gating on them is opt-in via config.
+  async antiRugCheck(token, pair) {
+    const out = {};
+    try {
+      const owner = await this.publicClient.readContract({
+        address: token,
+        abi: OWNED_ABI,
+        functionName: "owner"
+      });
+      out.ownerAddress = owner;
+      out.ownerRenounced = DEAD_ADDRS.has(owner.toLowerCase());
+    } catch {
+    }
+    try {
+      const [supply, deadBal, zeroBal] = await Promise.all([
+        this.publicClient.readContract({ address: pair, abi: ERC20_ABI, functionName: "totalSupply" }),
+        this.publicClient.readContract({
+          address: pair,
+          abi: ERC20_ABI,
+          functionName: "balanceOf",
+          args: ["0x000000000000000000000000000000000000dEaD"]
+        }),
+        this.publicClient.readContract({
+          address: pair,
+          abi: ERC20_ABI,
+          functionName: "balanceOf",
+          args: ["0x0000000000000000000000000000000000000000"]
+        })
+      ]);
+      if (supply > 0n) {
+        const burned = deadBal + zeroBal;
+        out.lpBurnedPct = Number(burned * 10000n / supply) / 100;
+      }
+    } catch {
+    }
+    return out;
   }
   // ── Execute on-chain buy ────────────────────────────────────────────────
   async executeBuy(token, pair, symbol, buyWei, isWbnb0) {
@@ -31147,7 +31350,9 @@ var SniperStrategy = class {
 
 // runner/src/strategies/backrun.ts
 init_esm2();
+init_source();
 var import_crypto5 = require("crypto");
+init_puissant();
 var WBNB4 = "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c";
 var FACTORY_ABI3 = parseAbi([
   "function getPair(address tokenA, address tokenB) view returns (address pair)"
@@ -31404,7 +31609,7 @@ var BackrunStrategy = class {
     const bnbOutRaw = getAmountOut3(tokenOutEff, sellSide.reserveToken, sellSide.reserveBNB);
     const bnbOutEff = bnbOutRaw * BigInt(Math.floor((1 - sellTax) * 1e4)) / 10000n;
     const profitBNB = Number(formatEther(bnbOutEff)) - sizeBNB;
-    const gasPriceWei = parseUnits("5", 9);
+    const gasPriceWei = parseUnits(String(Math.max(this.config.maxGasGwei, 1)), 9);
     const gasCostBNB = Number(formatEther((GAS_FRONTRUN3 + GAS_BACKRUN3) * gasPriceWei));
     const gasCostUSD = gasCostBNB * this.bnbPrice;
     const netProfitUSD = profitBNB * this.bnbPrice - gasCostUSD;
@@ -31589,6 +31794,7 @@ var BackrunStrategy = class {
 
 // runner/src/core/scanner.ts
 init_esm2();
+init_source();
 var FACTORY_ABI4 = parseAbi([
   "function allPairsLength() view returns (uint256)",
   "function allPairs(uint256 index) view returns (address)",
@@ -32248,6 +32454,142 @@ ws.on(async (msg, client) => {
       ws.send(client, { type: "venus_health", payload: { accounts: results, ts: Date.now() } });
     } catch (err) {
       ws.send(client, { type: "error", payload: { message: `Venus \u67E5\u8BE2\u5931\u8D25: ${err.message}` } });
+    }
+    return;
+  }
+  if (type === "protected_swap") {
+    cfg = loadConfig();
+    if (!cfg.privateKey) {
+      ws.send(client, { type: "protected_swap_result", payload: { ok: false, error: "\u8BF7\u5148\u5728\u8BBE\u7F6E\u9875\u914D\u7F6E\u94B1\u5305\u79C1\u94A5" } });
+      return;
+    }
+    try {
+      const { token, side, amount, slippagePct, gasGwei } = payload;
+      if (!/^0x[a-fA-F0-9]{40}$/.test(token)) throw new Error("\u65E0\u6548\u7684 token \u5730\u5740");
+      if (!Number.isFinite(amount) || amount <= 0) throw new Error("\u6570\u91CF\u9700\u8981\u5927\u4E8E 0");
+      if (side !== "buy" && side !== "sell") throw new Error("side \u5FC5\u987B\u662F buy / sell");
+      const { publicClient, walletClient } = buildClients(cfg.rpcUrl, cfg.privateKey, cfg.chain);
+      const { parseAbi: parseAbi2, parseUnits: parseUnits2, formatEther: formatEther2, formatUnits: formatUnits2, encodeFunctionData: encodeFunctionData2, getAddress: getAddress3 } = await Promise.resolve().then(() => (init_esm2(), esm_exports2));
+      const { PuissantClient: PuissantClient2 } = await Promise.resolve().then(() => (init_puissant(), puissant_exports));
+      const WBNB6 = "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c";
+      const ROUTER = "0x10ED43C718714eb63d5aA57B78B54704E256024E";
+      const tokenAd = getAddress3(token);
+      const account = walletClient.account;
+      const slip = Math.max(0.1, Math.min(50, slippagePct ?? 1)) / 100;
+      const gasPrice = parseUnits2(String(Math.max(1, Math.min(20, gasGwei ?? 5))), 9);
+      const ROUTER_ABI3 = parseAbi2([
+        "function getAmountsOut(uint256 amountIn, address[] path) view returns (uint256[] amounts)",
+        "function swapExactETHForTokensSupportingFeeOnTransferTokens(uint256 amountOutMin, address[] path, address to, uint256 deadline) payable",
+        "function swapExactTokensForETHSupportingFeeOnTransferTokens(uint256 amountIn, uint256 amountOutMin, address[] path, address to, uint256 deadline)"
+      ]);
+      const ERC20_ABI3 = parseAbi2([
+        "function balanceOf(address) view returns (uint256)",
+        "function allowance(address owner, address spender) view returns (uint256)",
+        "function approve(address spender, uint256 amount) returns (bool)",
+        "function decimals() view returns (uint8)"
+      ]);
+      const puissant = new PuissantClient2(walletClient, publicClient);
+      const deadline = BigInt(Math.floor(Date.now() / 1e3) + 120);
+      const nonce = await publicClient.getTransactionCount({ address: account.address, blockTag: "pending" });
+      let txData;
+      let value = 0n;
+      let approveTxNeeded = false;
+      let approveTx = null;
+      if (side === "buy") {
+        const amountIn = parseUnits2(amount.toFixed(6), 18);
+        const balance = await publicClient.getBalance({ address: account.address });
+        const gasReserve = parseUnits2("0.002", 18);
+        if (balance < amountIn + gasReserve) {
+          throw new Error(`BNB \u4F59\u989D\u4E0D\u8DB3\uFF1A\u9700\u8981 ${formatEther2(amountIn + gasReserve)}\uFF0C\u5F53\u524D ${formatEther2(balance)}`);
+        }
+        const quote = await publicClient.readContract({
+          address: ROUTER,
+          abi: ROUTER_ABI3,
+          functionName: "getAmountsOut",
+          args: [amountIn, [WBNB6, tokenAd]]
+        });
+        if (quote[1] === 0n) throw new Error("\u8BE5 token \u6CA1\u6709 BNB \u6D41\u52A8\u6027");
+        const minOut = quote[1] * BigInt(Math.floor((1 - slip) * 1e4)) / 10000n;
+        txData = encodeFunctionData2({
+          abi: ROUTER_ABI3,
+          functionName: "swapExactETHForTokensSupportingFeeOnTransferTokens",
+          args: [minOut, [WBNB6, tokenAd], account.address, deadline]
+        });
+        value = amountIn;
+      } else {
+        const decimals = await publicClient.readContract({
+          address: tokenAd,
+          abi: ERC20_ABI3,
+          functionName: "decimals"
+        });
+        const amountIn = parseUnits2(amount.toString(), decimals);
+        const bal = await publicClient.readContract({
+          address: tokenAd,
+          abi: ERC20_ABI3,
+          functionName: "balanceOf",
+          args: [account.address]
+        });
+        if (bal < amountIn) throw new Error(`token \u4F59\u989D\u4E0D\u8DB3\uFF1A${formatUnits2(bal, decimals)} < ${amount}`);
+        const quote = await publicClient.readContract({
+          address: ROUTER,
+          abi: ROUTER_ABI3,
+          functionName: "getAmountsOut",
+          args: [amountIn, [tokenAd, WBNB6]]
+        });
+        if (quote[1] === 0n) throw new Error("\u8BE5 token \u6CA1\u6709 BNB \u6D41\u52A8\u6027");
+        const minOut = quote[1] * BigInt(Math.floor((1 - slip) * 1e4)) / 10000n;
+        const allowance = await publicClient.readContract({
+          address: tokenAd,
+          abi: ERC20_ABI3,
+          functionName: "allowance",
+          args: [account.address, ROUTER]
+        });
+        if (allowance < amountIn) {
+          approveTxNeeded = true;
+          approveTx = {
+            to: tokenAd,
+            data: encodeFunctionData2({
+              abi: ERC20_ABI3,
+              functionName: "approve",
+              args: [ROUTER, (1n << 256n) - 1n]
+            }),
+            value: 0n,
+            gas: 80000n,
+            gasPrice,
+            nonce
+          };
+        }
+        txData = encodeFunctionData2({
+          abi: ROUTER_ABI3,
+          functionName: "swapExactTokensForETHSupportingFeeOnTransferTokens",
+          args: [amountIn, minOut, [tokenAd, WBNB6], account.address, deadline]
+        });
+      }
+      const swapTx = {
+        to: ROUTER,
+        data: txData,
+        value,
+        gas: 350000n,
+        gasPrice,
+        nonce: approveTxNeeded ? nonce + 1 : nonce
+      };
+      const txs = approveTxNeeded ? [approveTx, swapTx] : [swapTx];
+      console.log(source_default.cyan(`[ProtectedSwap] \u2192 ${side} ${amount} on Pancake V2 via Puissant${approveTxNeeded ? " (\u542B approve)" : ""}`));
+      const result = await puissant.submitBundle(txs, { ttlSeconds: 30, acceptRevertingHashes: [] });
+      if (!result.ok) {
+        ws.send(client, { type: "protected_swap_result", payload: { ok: false, error: result.error ?? "relay \u62D2\u7EDD" } });
+        return;
+      }
+      const swapHash = result.txHashes[result.txHashes.length - 1];
+      ws.send(client, {
+        type: "protected_swap_result",
+        payload: { ok: true, txHash: swapHash, bundleId: result.bundleId ?? null }
+      });
+      console.log(source_default.green(`[ProtectedSwap] \u2713 \u5DF2\u63D0\u4EA4 bundle: ${result.bundleId ?? "(null)"} swap=${swapHash}`));
+    } catch (e) {
+      const msg2 = e?.shortMessage ?? e?.message ?? String(e);
+      console.warn(source_default.yellow(`[ProtectedSwap] \u2717 ${msg2}`));
+      ws.send(client, { type: "protected_swap_result", payload: { ok: false, error: msg2 } });
     }
     return;
   }
