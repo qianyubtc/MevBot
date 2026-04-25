@@ -10,6 +10,24 @@ export type WsMessage =
   | { type: 'connected'; payload: { version: string } }
   | { type: 'error'; payload: { message: string } }
   | { type: 'mempool_tx'; payload: { hash: string; bnb: number; usd: number } }
+  | { type: 'lp_pools'; payload: { pools: LpPool[]; bnbPrice: number; ts: number } }
+  | { type: 'venus_health'; payload: { accounts: VenusAccount[]; ts: number } }
+
+export interface LpPool {
+  sym: string
+  pair: string
+  tvlUSD: number
+  reserveBNB: number
+  error?: string
+}
+
+export interface VenusAccount {
+  address: string
+  liquidity?: number
+  shortfall?: number
+  healthy?: boolean
+  error?: string
+}
 
 export interface StrategyStatus {
   strategy: string

@@ -220,6 +220,121 @@ ws.on(async (msg, client) => {
     return
   }
 
+  // ── LP Yield Snapshot ────────────────────────────────────
+  // Read reserves of a fixed list of major BSC pools, compute TVL in USD
+  // and the BNB-side reserve. Web side renders the table; runner does the
+  // RPC work so we don't have to ship viem to the browser.
+  if (type === 'query_lp_pools') {
+    try {
+      cfg = loadConfig()
+      const { publicClient } = buildScanClient()
+      const { parseAbi, formatUnits } = await import('viem')
+      const PAIR_ABI = parseAbi([
+        'function getReserves() view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)',
+        'function token0() view returns (address)',
+        'function totalSupply() view returns (uint256)',
+      ])
+      const ROUTER_ABI = parseAbi([
+        'function getAmountsOut(uint256 amountIn, address[] path) view returns (uint256[] amounts)',
+      ])
+
+      const WBNB = '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c'
+      const BUSD = '0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56'
+      const ROUTER = '0x10ED43C718714eb63d5aA57B78B54704E256024E'
+      // Hand-picked top-TVL Pancake V2 pairs. Stable DEX surface so we don't
+      // need an indexer. Pair addresses are deterministic (CREATE2) so they
+      // never change.
+      const POOLS = [
+        { sym: 'CAKE-BNB', pair: '0x0eD7e52944161450477ee417DE9Cd3a859b14fD0' },
+        { sym: 'BUSD-BNB', pair: '0x58F876857a02D6762E0101bb5C46A8c1ED44Dc16' },
+        { sym: 'USDT-BNB', pair: '0x16b9a82891338f9bA80E2D6970FddA79D1eb0daE' },
+        { sym: 'USDC-BNB', pair: '0xd99c7F6C65857AC913a8f880A4cb84032AB2FC5b' },
+        { sym: 'ETH-BNB',  pair: '0x74E4716E431f45807DCF19f284c7aA99F18a4fbc' },
+        { sym: 'BTCB-BNB', pair: '0x61EB789d75A95CAa3fF50ed7E47b96c132fEc082' },
+        { sym: 'DOT-BNB',  pair: '0xDd5bAd8f8b360d76d12FdA230F8BAF42fe0022CF' },
+        { sym: 'LINK-BNB', pair: '0x824eb9faDFb377394430d2744fa7C42916DE3eCe' },
+      ]
+
+      // Snapshot BNB price first.
+      let bnbPrice = 580
+      try {
+        const a = await publicClient.readContract({
+          address: ROUTER, abi: ROUTER_ABI, functionName: 'getAmountsOut',
+          args: [BigInt(1e18), [WBNB, BUSD]],
+        }) as bigint[]
+        const p = Number(formatUnits(a[1], 18))
+        if (p > 100 && p < 10000) bnbPrice = p
+      } catch { /* fall back */ }
+
+      const results = await Promise.all(POOLS.map(async (p) => {
+        try {
+          const [reserves, token0] = await Promise.all([
+            publicClient.readContract({ address: p.pair as `0x${string}`, abi: PAIR_ABI, functionName: 'getReserves' }),
+            publicClient.readContract({ address: p.pair as `0x${string}`, abi: PAIR_ABI, functionName: 'token0' }),
+          ])
+          const isWbnb0 = String(token0).toLowerCase() === WBNB.toLowerCase()
+          const reserveBNB = isWbnb0 ? reserves[0] : reserves[1]
+          // LP TVL is BNB-side × 2 (the two halves are equal-value at equilibrium).
+          const tvlUSD = Number(formatUnits(reserveBNB, 18)) * bnbPrice * 2
+          return { sym: p.sym, pair: p.pair, tvlUSD, reserveBNB: Number(formatUnits(reserveBNB, 18)) }
+        } catch (e: any) {
+          return { sym: p.sym, pair: p.pair, tvlUSD: 0, reserveBNB: 0, error: e?.message ?? 'rpc error' }
+        }
+      }))
+
+      ws.send(client, { type: 'lp_pools', payload: { pools: results, bnbPrice, ts: Date.now() } })
+    } catch (err: any) {
+      ws.send(client, { type: 'error', payload: { message: `LP 查询失败: ${err.message}` } })
+    }
+    return
+  }
+
+  // ── Venus Account Health ─────────────────────────────────
+  // Given a list of addresses, fetch their Venus liquidity / shortfall.
+  // Health Factor approximation: liquidity > 0 ⇒ healthy; shortfall > 0 ⇒
+  // liquidatable. We surface both raw values + a derived ratio.
+  if (type === 'query_venus_health') {
+    try {
+      cfg = loadConfig()
+      const { publicClient } = buildScanClient()
+      const { parseAbi, formatUnits } = await import('viem')
+      const COMPTROLLER = '0xfD36E2c2a6789Db23113685031d7F16329158384' as `0x${string}`
+      const COMPTROLLER_ABI = parseAbi([
+        'function getAccountLiquidity(address account) view returns (uint256 error, uint256 liquidity, uint256 shortfall)',
+      ])
+      const addrs: string[] = Array.isArray(payload?.addresses) ? payload.addresses : []
+      if (addrs.length === 0 || addrs.length > 50) {
+        ws.send(client, { type: 'error', payload: { message: 'Venus 查询: addresses 数量需在 1-50 之间' } })
+        return
+      }
+
+      const results = await Promise.all(addrs.map(async (a) => {
+        try {
+          const r = await publicClient.readContract({
+            address: COMPTROLLER, abi: COMPTROLLER_ABI, functionName: 'getAccountLiquidity',
+            args: [a as `0x${string}`],
+          }) as readonly [bigint, bigint, bigint]
+          const [errCode, liquidity, shortfall] = r
+          if (errCode !== 0n) return { address: a, error: `comptroller error ${errCode}` }
+          // Both values are in USD-scaled 1e18 (Venus follows Compound units).
+          return {
+            address:    a,
+            liquidity:  Number(formatUnits(liquidity,  18)),
+            shortfall:  Number(formatUnits(shortfall,  18)),
+            healthy:    shortfall === 0n,
+          }
+        } catch (e: any) {
+          return { address: a, error: e?.shortMessage ?? e?.message ?? 'rpc error' }
+        }
+      }))
+
+      ws.send(client, { type: 'venus_health', payload: { accounts: results, ts: Date.now() } })
+    } catch (err: any) {
+      ws.send(client, { type: 'error', payload: { message: `Venus 查询失败: ${err.message}` } })
+    }
+    return
+  }
+
   // ── Scanner ──────────────────────────────────────────────
   if (type === 'scan') {
     console.log(chalk.cyan(`[Runner] 扫描: ${payload.strategy}`))
