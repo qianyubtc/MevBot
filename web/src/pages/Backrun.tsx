@@ -180,7 +180,7 @@ export default function Backrun() {
 
   const sliderParams = [
     { label: '最小利润 (USD)',        key: 'minProfitUSD',       min: 0.1, max: 20,    step: 0.1,  unit: '$' },
-    { label: '执行金额 (USD)',         key: 'executionAmountUSD', min: 10,  max: 2000,  step: 10,   unit: '$' },
+    { label: '执行金额 (USD)',         key: 'executionAmountUSD', min: 5,   max: 2000,  step: 5,    unit: '$' },
     { label: '最大 Gas (Gwei)',        key: 'maxGasGwei',         min: 1,   max: 50,    step: 1,    unit: 'Gwei' },
     { label: '滑点容忍 (%)',           key: 'slippageTolerance',  min: 0.1, max: 5,     step: 0.1,  unit: '%' },
     { label: '最小跨 DEX 价差 (%)',    key: 'minSpreadPct',       min: 0.1, max: 3,     step: 0.1,  unit: '%' },

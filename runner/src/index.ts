@@ -129,13 +129,17 @@ ws.on(async (msg, client) => {
       const raw = await scanClient.getBalance({ address: account.address })
       const bnb = parseFloat(formatUnits(raw, 18))
       // Dynamic minimum: execution amount in BNB + 0.005 BNB gas buffer
-      const execUSD = config?.executionAmountUSD ?? 20
+      const execUSD = config?.executionAmountUSD ?? 5
       const BNB_PRICE = 580
-      const MIN_BNB = parseFloat((execUSD / BNB_PRICE + 0.005).toFixed(4))
+      // Gas buffer ≈ $5 worth of BNB so the $5 minimum execution amount sits
+      // on top of a $10 total floor. Keeps the door open for shoestring users
+      // while still leaving room for one reverted tx.
+      const GAS_BUFFER_USD = 5
+      const MIN_BNB = parseFloat(((execUSD + GAS_BUFFER_USD) / BNB_PRICE).toFixed(4))
       if (bnb < MIN_BNB) {
         ws.send(client, {
           type: 'error',
-          payload: { message: `BNB 余额不足：当前 ${bnb.toFixed(4)} BNB，执行金额 $${execUSD} 至少需要 ${MIN_BNB} BNB（本金 + Gas）` },
+          payload: { message: `BNB 余额不足：当前 ${bnb.toFixed(4)} BNB，执行金额 $${execUSD} 至少需要 ${MIN_BNB} BNB（本金 $${execUSD} + Gas $${GAS_BUFFER_USD}）` },
         })
         return
       }
