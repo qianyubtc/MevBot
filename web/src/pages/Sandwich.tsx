@@ -3,7 +3,8 @@ import { useStore } from '@/store'
 import { wsClient } from '@/lib/ws'
 import TokenCard from '@/components/TokenCard'
 import type { Token } from '@/lib/ws'
-import { Play, Square, Search, RefreshCw, Loader2, WifiOff, AlertTriangle, Crosshair, Activity } from 'lucide-react'
+import { Play, Square, Search, RefreshCw, Loader2, WifiOff, AlertTriangle, Crosshair, Activity, Info } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { cn, formatUSD } from '@/lib/utils'
 
 // ── Real mempool feed (data from Runner via WS) ───────────────────────────
@@ -214,6 +215,25 @@ export default function Sandwich() {
             {isRunning ? <Square className="w-4 h-4" /> : <Play className="w-4 h-4" />}
             {isRunning ? '停止' : '启动'}
           </button>
+        </div>
+      </div>
+
+      {/* Network-suitability notice */}
+      <div className="rounded-xl border border-warning/30 bg-warning/5 px-4 py-3 flex gap-3 text-sm">
+        <Info className="w-4 h-4 flex-shrink-0 mt-0.5 text-warning" />
+        <div className="space-y-1.5 text-text-dim">
+          <div className="text-warning font-medium">网络要求 · 启动前请确认</div>
+          <div className="text-xs leading-relaxed">
+            夹子机器人依赖 <span className="text-white font-mono">WSS mempool 订阅</span> + <span className="text-white font-mono">极低延迟出块</span>，
+            必须配合稳定的私有节点（如 bloXroute / Merkle / 自建归档节点）。
+          </div>
+          <div className="text-xs leading-relaxed">
+            <span className="text-warning">⚠️ 不推荐场景：</span>
+            国内网络 / 公共 RPC（publicnode、ankr 公共版等） / 没有付费 mempool 订阅 ——
+            上述环境下大概率抢不到块、还会反复掉 socket，建议改用
+            <Link to="/backrun" className="text-primary hover:underline mx-1 font-medium">区块套利 (Backrun)</Link>
+            ：HTTP 轮询 + Puissant 私有通道，国内可用、不烧 gas。
+          </div>
         </div>
       </div>
 
