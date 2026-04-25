@@ -536,11 +536,20 @@ export class BackrunStrategy {
     const diffBNB   = Number(formatUnits(balanceAfter - balanceBefore, 18))
     const actualProfit = diffBNB * this.bnbPrice
 
+    // Receipt confirmed inclusion but balance didn't move — some other tx on
+    // the same wallet (another strategy?) may have masked it. Don't record a
+    // fake $0 success.
+    if (Math.abs(diffBNB) < 1e-9) {
+      console.log(chalk.dim(`[Backrun] bundle 落块但余额无变化，略过记录`))
+      return
+    }
+
     const trade = {
       id, strategy: 'backrun', token: this.config.token.symbol,
       txHash: backHash, chain: 'BSC',
       profitUSD: actualProfit, gasUSD: estimatedGasUSD,
-      status: 'success' as const, timestamp: Date.now(),
+      status: actualProfit > 0 ? 'success' as const : 'failed' as const,
+      timestamp: Date.now(),
     }
     saveTrade(trade)
     this.ws.broadcast({ type: 'trade', payload: trade })

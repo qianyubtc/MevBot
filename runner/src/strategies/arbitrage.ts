@@ -533,26 +533,63 @@ export class ArbitrageStrategy {
         return
       }
 
-      // Confirm via balance delta after one block.
-      await new Promise((r) => setTimeout(r, 5_000))
+      // ── CRITICAL: relay-accept ≠ on-chain inclusion ────────────────────────
+      // Puissant returns ok=true once the bundle is queued for distribution
+      // to validators. The bundle still needs to actually be included in a
+      // block — many get dropped (lost the gas race, validator picked someone
+      // else's bundle, etc.). We MUST wait for receipt before declaring
+      // success, otherwise:
+      //   1. dropped bundles record as "$0 success" (clutter / fake stats),
+      //   2. balance-delta during the wait window picks up profits from
+      //      OTHER concurrent strategies on the same wallet and falsely
+      //      attributes them to arbitrage ("phantom earnings" bug).
+      const [frontHash, backHash] = (result.txHashes ?? []) as [`0x${string}`?, `0x${string}`?]
+      if (!backHash) {
+        this.recordMissed(id, tp.symbol, 'relay 未返回 tx hash')
+        return
+      }
+      try {
+        const backR = await this.publicClient.waitForTransactionReceipt({
+          hash: backHash, timeout: 45_000,
+        })
+        if (backR.status !== 'success') {
+          this.recordFailed(id, tp.symbol, '后跑链上回滚')
+          return
+        }
+      } catch {
+        // Timeout — bundle was relay-accepted but never mined. Not a real
+        // trade. No gas spent (acceptReverting: []), so log as missed.
+        console.log(chalk.dim(`[Arbitrage] bundle 未被打包 (输给竞争 / 已过期) ${tp.symbol}`))
+        this.recordMissed(id, tp.symbol, '未被打包')
+        return
+      }
+
       const balanceAfter = await this.publicClient.getBalance({ address: account.address })
       const diffBNB      = Number(formatEther(balanceAfter - balanceBefore))
       const actualUSD    = diffBNB * this.bnbPrice
 
+      // Sanity guard: if the balance literally didn't move we shouldn't
+      // record a "success $0" — something else is off (race with another
+      // strategy clearing the delta, RPC stale read, etc.).
+      if (Math.abs(diffBNB) < 1e-9) {
+        this.recordMissed(id, tp.symbol, '余额无变化')
+        return
+      }
+
       const trade = {
         id, strategy: 'arbitrage', token: tp.symbol,
-        txHash: result.txHashes?.[0] ?? '', chain: 'BSC',
+        txHash: backHash, chain: 'BSC',
         profitUSD: actualUSD, gasUSD: 0,
-        status: actualUSD >= 0 ? 'success' as const : 'failed' as const,
+        status: actualUSD > 0 ? 'success' as const : 'failed' as const,
         timestamp: Date.now(),
       }
       saveTrade(trade)
       this.ws.broadcast({ type: 'trade', payload: trade })
 
-      if (actualUSD >= 0) {
-        console.log(chalk.green(`[Arbitrage] ✓ 套利完成 ${tp.symbol} +$${actualUSD.toFixed(2)}`))
+      if (actualUSD > 0) {
+        console.log(chalk.green(`[Arbitrage] ✓ 套利完成 ${tp.symbol} +$${actualUSD.toFixed(2)} | ${backHash}`))
       } else {
-        console.log(chalk.yellow(`[Arbitrage] 套利亏损 ${tp.symbol} $${actualUSD.toFixed(2)}`))
+        console.log(chalk.yellow(`[Arbitrage] 套利亏损 ${tp.symbol} $${actualUSD.toFixed(2)} | ${backHash}`))
       }
     } catch (err: any) {
       this.recordFailed(id, tp.symbol, cleanError(err))
@@ -568,5 +605,12 @@ export class ArbitrageStrategy {
     }
     saveTrade(trade)
     this.ws.broadcast({ type: 'trade', payload: trade })
+  }
+
+  // Bundle was relay-accepted but never mined (lost gas race / TTL expired).
+  // No gas spent — we don't record a trade at all, just log it for stats.
+  // Saving as "failed" would inflate the failure count with non-events.
+  private recordMissed(_id: string, symbol: string, reason: string) {
+    console.log(chalk.dim(`[Arbitrage] 略过 ${symbol}: ${reason}`))
   }
 }

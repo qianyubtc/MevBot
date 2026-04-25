@@ -59,6 +59,32 @@ export function resetData() {
   writeJSON(SNAPSHOTS_FILE, [])
 }
 
+// One-shot migration: drop "fake success" records left by older versions.
+// Pre-v0.6.1 arbitrage saved status=success even when the Puissant bundle
+// was relay-accepted but never mined, producing $0 success rows. Some
+// concurrent-strategy runs also caused inflated cross-attributed profits to
+// be saved with txHash='' (no on-chain hash because we read balance delta
+// before the actual tx confirmed). We strip both patterns.
+export function pruneFakeTrades(): number {
+  const trades = readJSON<TradeRecord[]>(TRADES_FILE, [])
+  const before = trades.length
+  const cleaned = trades.filter((t) => {
+    // Drop pre-fix arb $0-success rows
+    if (t.strategy === 'arbitrage' && t.status === 'success' && t.profitUSD === 0) return false
+    // Drop any "success" without a real on-chain hash — those couldn't have
+    // been confirmed on-chain
+    if (t.status === 'success' && (!t.txHash || t.txHash === '')) return false
+    return true
+  })
+  if (cleaned.length !== before) {
+    writeJSON(TRADES_FILE, cleaned)
+    // Snapshots derived from those trades are also stale — wipe them so the
+    // pnl chart doesn't keep showing the inflated curve.
+    writeJSON(SNAPSHOTS_FILE, [])
+  }
+  return before - cleaned.length
+}
+
 export function getPnLSummary() {
   const trades = readJSON<TradeRecord[]>(TRADES_FILE, [])
   const snaps = readJSON<Snapshot[]>(SNAPSHOTS_FILE, [])

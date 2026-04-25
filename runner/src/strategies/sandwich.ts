@@ -495,11 +495,20 @@ export class SandwichStrategy {
     const diffBNB      = Number(formatUnits(balanceAfter - balanceBefore, 18))
     const actualProfit = diffBNB * this.bnbPrice
 
+    // Both legs landed but wallet didn't move — abort recording rather than
+    // saving a fake $0 success. Most likely cause: another concurrent
+    // strategy on the same wallet absorbed the delta.
+    if (Math.abs(diffBNB) < 1e-9) {
+      console.log(chalk.dim(`[Sandwich] 落块但余额无变化，略过记录`))
+      return
+    }
+
     const trade = {
       id, strategy: 'sandwich', token: this.config.token.symbol,
       txHash: lastHash, chain: 'BSC',
       profitUSD: actualProfit, gasUSD: estimatedGasUSD,
-      status: 'success' as const, timestamp: Date.now(),
+      status: actualProfit > 0 ? 'success' as const : 'failed' as const,
+      timestamp: Date.now(),
     }
     saveTrade(trade)
     this.ws.broadcast({ type: 'trade', payload: trade })

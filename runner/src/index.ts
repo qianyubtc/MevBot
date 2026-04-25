@@ -9,7 +9,7 @@ import { ArbitrageStrategy } from './strategies/arbitrage.js'
 import { SniperStrategy } from './strategies/sniper.js'
 import { BackrunStrategy } from './strategies/backrun.js'
 import { OnChainScanner } from './core/scanner.js'
-import { getPnLSummary, saveSnapshot, resetData } from './core/db.js'
+import { getPnLSummary, saveSnapshot, resetData, pruneFakeTrades } from './core/db.js'
 import { loadConfig, saveConfig } from './core/config.js'
 
 console.log(chalk.cyan('╔════════════════════════════════╗'))
@@ -18,6 +18,13 @@ console.log(chalk.cyan('╚═════════════════�
 
 let cfg = loadConfig()
 console.log(chalk.dim(`Chain: ${cfg.chain} | RPC: ${cfg.rpcUrl.slice(0, 40)}`))
+
+// Strip stale fake-success records left by older versions (pre-v0.6.1
+// arbitrage logged $0 successes; some flows saved success without txHash).
+const pruned = pruneFakeTrades()
+if (pruned > 0) {
+  console.log(chalk.dim(`[Runner] 清理 ${pruned} 条历史虚假成功记录 (pre-v0.6.1 套利相关)`))
+}
 if (!cfg.privateKey) {
   console.log(chalk.yellow('[Runner] 未配置私钥，请在 Web 面板设置页完成配置'))
 }
