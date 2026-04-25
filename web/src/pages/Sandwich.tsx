@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useStore } from '@/store'
 import { wsClient } from '@/lib/ws'
 import TokenCard from '@/components/TokenCard'
+import StrategyRpcCard from '@/components/StrategyRpcCard'
 import type { Token } from '@/lib/ws'
 import { Play, Square, Search, RefreshCw, Loader2, WifiOff, AlertTriangle, Crosshair, Activity, Info } from 'lucide-react'
 import { Link } from 'react-router-dom'
@@ -418,6 +419,15 @@ export default function Sandwich() {
               )}
             </>
           )}
+
+          <StrategyRpcCard
+            strategy="sandwich"
+            presets={[
+              { label: 'bloXroute',     url: 'wss://api.blxrbdn.com/ws' },
+              { label: 'NodeReal',      url: 'wss://bsc-mainnet.nodereal.io/ws/v1/YOUR_KEY' },
+              { label: 'BSC 公共 WSS',   url: 'wss://bsc-rpc.publicnode.com' },
+            ]}
+          />
 
           {/* Strategy parameters */}
           <div className="rounded-xl bg-bg-surface border border-bg-border p-4 space-y-4">

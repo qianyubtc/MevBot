@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useStore } from '@/store'
 import { wsClient } from '@/lib/ws'
 import TokenCard from '@/components/TokenCard'
+import StrategyRpcCard from '@/components/StrategyRpcCard'
 import type { Token } from '@/lib/ws'
 import { Play, Square, Search, RefreshCw, Loader2, WifiOff, AlertTriangle, Crosshair, Activity, Zap } from 'lucide-react'
 import { cn, formatUSD } from '@/lib/utils'
@@ -400,6 +401,15 @@ export default function Backrun() {
               )}
             </>
           )}
+
+          <StrategyRpcCard
+            strategy="backrun"
+            presets={[
+              { label: 'BSC PublicNode',  url: 'https://bsc-rpc.publicnode.com' },
+              { label: 'Ankr 公共',       url: 'https://rpc.ankr.com/bsc' },
+              { label: '48 Club RPC',     url: 'https://rpc-bsc.48.club' },
+            ]}
+          />
 
           <div className="rounded-xl bg-bg-surface border border-bg-border p-4 space-y-4">
             <div className="text-sm font-medium text-white">策略参数</div>

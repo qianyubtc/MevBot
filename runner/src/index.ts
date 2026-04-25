@@ -151,8 +151,19 @@ ws.on(async (msg, client) => {
       console.log(chalk.yellow(`[Runner] 已停止旧 ${strategy} 策略`))
     }
 
-    console.log(chalk.cyan(`[Runner] 启动策略: ${strategy}`))
-    const { publicClient, walletClient } = buildClients(cfg.rpcUrl, cfg.privateKey, cfg.chain)
+    // Per-strategy RPC override: if the user filled `rpcUrl` in the strategy's
+    // config card, use that; otherwise fall back to the global RPC. This lets
+    // each bot run on its own dedicated node so they can't compete for sockets
+    // or rate-limit each other.
+    const strategyRpc = (typeof config?.rpcUrl === 'string' && config.rpcUrl.trim())
+      ? config.rpcUrl.trim()
+      : cfg.rpcUrl
+    if (strategyRpc !== cfg.rpcUrl) {
+      console.log(chalk.cyan(`[Runner] 启动策略: ${strategy} · 使用专用节点 ${strategyRpc.slice(0, 40)}…`))
+    } else {
+      console.log(chalk.cyan(`[Runner] 启动策略: ${strategy}`))
+    }
+    const { publicClient, walletClient } = buildClients(strategyRpc, cfg.privateKey, cfg.chain)
     const routers = Object.values(DEX_ROUTERS[cfg.chain] ?? {})
 
     if (strategy === 'sandwich') {

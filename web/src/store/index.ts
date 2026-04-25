@@ -17,8 +17,13 @@ export interface Config {
   dailyLossLimit: number
 }
 
+// Each strategy may override the global RPC. Empty string ⇒ inherit `Config.rpcUrl`.
+// We expose this as `rpcUrl?: string` rather than baking it into every concrete
+// strategy interface, so the runner can read it uniformly via
+// `strategyConfig[strategy].rpcUrl ?? globalConfig.rpcUrl`.
 export interface StrategyConfig {
   sandwich: {
+    rpcUrl?: string
     minProfitUSD: number
     maxGasGwei: number
     priorityGasMultiplier: number
@@ -30,12 +35,14 @@ export interface StrategyConfig {
     enabled: boolean
   }
   arbitrage: {
+    rpcUrl?: string
     minProfitUSD: number
     maxGasGwei: number
     minSpreadPct: number
     enabled: boolean
   }
   backrun: {
+    rpcUrl?: string
     minProfitUSD: number
     maxGasGwei: number
     executionAmountUSD: number
@@ -44,12 +51,14 @@ export interface StrategyConfig {
     enabled: boolean
   }
   lp: {
+    rpcUrl?: string
     minProfitUSD: number
     maxGasGwei: number
     minTvlUSD: number
     enabled: boolean
   }
   sniper: {
+    rpcUrl?: string
     minLiquidityUSD: number
     maxBuyUSD: number
     targetGainPct: number
@@ -57,6 +66,7 @@ export interface StrategyConfig {
     enabled: boolean
   }
   liquidation: {
+    rpcUrl?: string
     minBonusPct: number
     protocols: string[]
     enabled: boolean
@@ -112,6 +122,7 @@ const defaultConfig: Config = {
 
 const defaultStrategyConfig: StrategyConfig = {
   sandwich: {
+    rpcUrl: '',
     minProfitUSD: 3,
     maxGasGwei: 5,
     priorityGasMultiplier: 1.5,
@@ -123,12 +134,14 @@ const defaultStrategyConfig: StrategyConfig = {
     enabled: false,
   },
   arbitrage: {
+    rpcUrl: '',
     minProfitUSD: 3,
     maxGasGwei: 8,
     minSpreadPct: 0.3,
     enabled: false,
   },
   backrun: {
+    rpcUrl: '',
     minProfitUSD: 0.5,
     maxGasGwei: 5,
     executionAmountUSD: 50,
@@ -137,12 +150,14 @@ const defaultStrategyConfig: StrategyConfig = {
     enabled: false,
   },
   lp: {
+    rpcUrl: '',
     minProfitUSD: 10,
     maxGasGwei: 8,
     minTvlUSD: 100000,
     enabled: false,
   },
   sniper: {
+    rpcUrl: '',
     minLiquidityUSD: 30000,
     maxBuyUSD: 100,
     targetGainPct: 50,
@@ -150,6 +165,7 @@ const defaultStrategyConfig: StrategyConfig = {
     enabled: false,
   },
   liquidation: {
+    rpcUrl: '',
     minBonusPct: 5,
     protocols: ['Venus', 'Alpaca'],
     enabled: false,
